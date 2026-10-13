@@ -104,7 +104,7 @@ public enum Prompts {
             in the words used), things to buy (one per item), and things the speaker said they would do. Be strict: an \
             appointment needs a day or a time actually said; things to buy are shopping (groceries, household things), not \
             meals out or takeaways; a film, a show or a topic mentioned in passing is none of these. Only what was actually \
-            said; most conversations have nothing, so leave a list empty unless you're sure.
+            said; leave a list empty if there's nothing for it.
 
             \(lines.joined(separator: "\n"))
             """

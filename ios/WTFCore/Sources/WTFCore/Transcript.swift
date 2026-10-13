@@ -42,7 +42,9 @@ public enum TranscriptFormat {
 
     /// Whisper-style tidying for any recogniser: stray quotes and repeated sentences.
     public static func clean(_ text: String) -> String {
-        var t = text.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var t = text.replacingOccurrences(of: "\"", with: "")
+        // The recogniser marks hesitations "#um", "#oh": not words anyone wants to read back.
+        t = Rx(#"\s*#\w+[,.]?"#).replace(t, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         let sentences = Rx(#"(?<=[.?!])\s+"#).split(t)
         var out: [String] = []
         for s in sentences where out.last?.lowercased() != s.lowercased() { out.append(s) }

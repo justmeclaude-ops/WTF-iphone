@@ -139,6 +139,10 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(threads.suffix(2).map(\.status), [.hanging, .current])
         XCTAssertEqual(Threads.hanging(threads).map(\.title), ["Chinese food"])
         XCTAssertTrue(Threads.prompt(threads, recent: "", new: "[10:00:00] You: Anyway.").contains("(dropped part-way)"))
+        // The model says which dropped topic its "you were" is about.
+        let two = Threads.apply(TopicChange(topics: ["Birthday", "MOT", "Shopping"], dropped: [true, true],
+                                            leftAt: "you were booking the Crown", leftAtTopic: "birthday"), to: [], from: at(0), to: at(30))
+        XCTAssertEqual(two.map(\.leftAt), ["you were booking the Crown", "", nil])
         XCTAssertEqual(Threads.close(threads).last?.status, .finished)
         // Nothing usable: unchanged but longer.
         XCTAssertEqual(Threads.apply(TopicChange(topics: [" "]), to: threads, from: at(80), to: at(90)).count, threads.count)
@@ -168,6 +172,20 @@ final class ThreadsTests: XCTestCase {
         let model = ActionRules.fromModel(buy: [], todo: [], events: [("Samurai", "Nothing", nil), ("Chinese food", "Later", "Restaurant"),
                                                                      ("Dentist", "Thursday at 3", nil)], conversationStart: Date())
         XCTAssertEqual(model.map(\.title), ["Dentist"])
+    }
+
+    func testDatesComeFromTheirOwnSentence() {
+        // Monday 12 October 2026, as recognised on the phone (with its slips).
+        let ref = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 13, minute: 16))!
+        let lines = [
+            "[13:16:00] Speech: Right, so we need to sort mom's birthday. It's on the 2nd of November that's Saturday, so I was thinking we bucked the back room at the crown for Saturday the first at seven in the evening. Does that work?",
+            "[13:17:30] Speaker 1: I'll order it tonight. Remind me I do that. Yeah, do it tonight or you forget. What about your dentist? Isn't that next Tuesday? Oh God, yes. Next Tuesday half three.",
+        ]
+        let events = ActionRules.ruleActions(lines, conversationStart: ref, title: nil, youOnly: false).filter { $0.type == .event }
+        let byTitle = Dictionary(events.map { ($0.title, $0.resolved.map { [$0.month, $0.day] } ?? []) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(byTitle["Mom's birthday"], [11, 2])
+        XCTAssertEqual(byTitle["Dentist"], [10, 20])
+        XCTAssertEqual(TranscriptFormat.clean("Right, #um so we need #oh, did you"), "Right, so we need did you")
     }
 
     func testVocabulary() {

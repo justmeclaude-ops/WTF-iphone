@@ -50,7 +50,7 @@ actor Pipeline {
                 let url = URL(fileURLWithPath: path)
                 let length = max(1, chunk.end.timeIntervalSince(chunk.start))
                 let started = Date()
-                async let heardVoices = withDeadline(20 + length) { await VoiceEngine.shared.split(url) }
+                async let heardVoices = withDeadline(60 + length) { await VoiceEngine.shared.split(url) }
                 // Usually the words were heard live already; if not, from the file.
                 var words = await withDeadline(4) { await LiveTranscriber.shared.words(from: chunk.start, to: chunk.end) }
                 let live = words != nil
@@ -332,7 +332,7 @@ actor Pipeline {
             guard let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first else { continue }
             let before = c.transcript.hasSuffix(next.text) ? String(c.transcript.dropLast(next.text.count)) : ""
             let prompt = Threads.prompt(c.threads, recent: before, new: next.text)
-            guard let change = await withDeadline(25, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }) else { continue }
+            guard let change = await withDeadline(40, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }) else { continue }
             c.threads = Threads.apply(change, to: c.threads, from: next.from, to: next.to)
             try? modelContext.save()
             await showTrail(of: c)

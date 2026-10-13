@@ -35,8 +35,10 @@ public struct TopicChange: Sendable {
     public var dropped: [Bool]
     /// What you were in the middle of saying when a topic was dropped.
     public var leftAt: String
-    public init(topics: [String], dropped: [Bool] = [], leftAt: String = "") {
-        self.topics = topics; self.dropped = dropped; self.leftAt = leftAt
+    /// Which topic [leftAt] is about (else the last dropped one).
+    public var leftAtTopic: String
+    public init(topics: [String], dropped: [Bool] = [], leftAt: String = "", leftAtTopic: String = "") {
+        self.topics = topics; self.dropped = dropped; self.leftAt = leftAt; self.leftAtTopic = leftAtTopic
     }
 }
 
@@ -59,8 +61,10 @@ public enum Threads {
         }
         let span = max(0, to.timeIntervalSince(from)) / Double(titles.count)
         let leftAt = change.leftAt.trimmingCharacters(in: .whitespacesAndNewlines)
-        // The last dropped topic in this stretch is the one [leftAt] is about.
-        let lastDropped = titles.indices.dropLast().last { change.dropped.indices.contains($0) && change.dropped[$0] }
+        // The dropped topic [leftAt] is about: the one named, else the last dropped in this stretch.
+        let wasDropped = { (k: Int) in change.dropped.indices.contains(k) && change.dropped[k] }
+        let lastDropped = titles.indices.dropLast().first { wasDropped($0) && same(titles[$0], change.leftAtTopic) }
+            ?? titles.indices.dropLast().last(where: wasDropped)
         for (k, title) in titles.enumerated() {
             let segFrom = from.addingTimeInterval(span * Double(k)), segTo = from.addingTimeInterval(span * Double(k + 1))
             if let i = out.indices.last, out[i].status == .current {

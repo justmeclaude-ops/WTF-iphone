@@ -22,11 +22,11 @@ struct Appointment {
 
 @Generable
 struct FoundActions {
-    @Guide(description: "Groceries or household things to buy from a shop, one item each, e.g. Milk. Not meals out or takeaways. Usually empty")
+    @Guide(description: "Groceries or household things to buy from a shop, one item each, e.g. Milk, AA batteries. Not meals out or takeaways")
     var buy: [String]
     @Guide(description: "Things the speaker said they would do, as short tasks, e.g. Ring the landlord")
     var todo: [String]
-    @Guide(description: "Appointments or plans with a day or a time actually said. Usually empty")
+    @Guide(description: "Appointments or plans with a day or a time actually said, e.g. MOT at the garage, Thursday 9am")
     var appointments: [Appointment]
 }
 
@@ -38,6 +38,8 @@ struct TopicStep {
     var dropped: [Bool]
     @Guide(description: "If a topic was dropped part-way: what I was in the middle of saying about it, under 15 words, starting with 'you were'. Otherwise empty")
     var leftAt: String
+    @Guide(description: "Which topic that was, exactly as named in topics. Empty if none was dropped")
+    var leftAtTopic: String
 }
 
 /// Apple Intelligence's on-device model: summaries, list items and answers, free and private.
@@ -79,7 +81,7 @@ enum Brain {
     static func topic(_ prompt: String) async throws -> TopicChange {
         let session = LanguageModelSession(model: model, instructions: "You follow the topics of a conversation as it wanders, for someone who loses their train of thought.")
         let step = try await session.respond(to: prompt, generating: TopicStep.self).content
-        return TopicChange(topics: step.topics, dropped: step.dropped, leftAt: step.leftAt)
+        return TopicChange(topics: step.topics, dropped: step.dropped, leftAt: step.leftAt, leftAtTopic: step.leftAtTopic)
     }
 
     /// A short answer to read aloud, given up on after [seconds].

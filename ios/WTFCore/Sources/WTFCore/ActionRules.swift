@@ -131,13 +131,22 @@ public enum ActionRules {
                     out.append(ExtractedAction(type: .todo, title: capitalised(task)))
                 }
             }
-            if let resolved = WhenParser.parse(t, reference: conversationStart, calendar: calendar),
-               resolved.hour != nil || eventNoun.test(t) {
-                if let noun = eventNoun.first(t) {
+            // Sentence by sentence: the date that goes with "dentist" is in its own sentence or
+            // the next ("What about your dentist? Isn't that next Tuesday?"), not anywhere on the
+            // line ("I'll order it tonight" earlier must not make it tonight).
+            let sentences = Rx(#"(?<=[.?!])\s+"#).split(t)
+            for (i, sentence) in sentences.enumerated() {
+                let noun = eventNoun.first(sentence)
+                var candidates = [sentence]
+                if noun != nil, i + 1 < sentences.count, !eventNoun.test(sentences[i + 1]) { candidates.append(sentences[i + 1]) }
+                guard let (said, resolved) = candidates.lazy.compactMap({ c in
+                    WhenParser.parse(c, reference: conversationStart, calendar: calendar).map { (c, $0) }
+                }).first else { continue }
+                if let noun {
                     let name = (noun[1] + " " + noun[2]).trimmingCharacters(in: .whitespaces)
-                    out.append(ExtractedAction(type: .event, title: capitalised(name), whenText: t, resolved: resolved))
-                } else if let title, agreed.test(t) {
-                    out.append(ExtractedAction(type: .event, title: title, whenText: t, resolved: resolved))
+                    out.append(ExtractedAction(type: .event, title: capitalised(name), whenText: said, resolved: resolved))
+                } else if let title, resolved.hour != nil, agreed.test(sentence) {
+                    out.append(ExtractedAction(type: .event, title: title, whenText: said, resolved: resolved))
                 }
             }
         }
