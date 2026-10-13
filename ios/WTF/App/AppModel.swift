@@ -200,8 +200,9 @@ final class AppModel {
         let answer = await spokenRecap()
         messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
         messages.append(ChatMessage(fromUser: false, text: answer))
-        guard ReadAloud.headphonesOn else { return answer }
-        ReadAloud.shared.start(answer)
+        // Read out before the answer's shown: the app stays awake while it's speaking, and is
+        // free to be put to sleep the moment the answer's handed back.
+        _ = await ReadAloud.shared.sayIntoHeadphones(answer)
         return answer
     }
 
