@@ -74,7 +74,10 @@ public enum ActionRules {
         #"dinner|lunch|drinks|deadline|flight|match|gig|check-up|checkup|game night|parents' evening)\b"#)
     static let agreed = Rx(#"\b(works|perfect|booked|see you|confirmed|that's fine|sounds good|great|lovely|yes|yeah)\b"#)
     static let bogusEventTitle = Rx(#"^(discuss|discussing|talk|talking|chat|conversation|meeting for .* link)"#)
-    static let vagueWhen = Rx(#"any ?time|unspecified|not (specified|said|given)|unknown"#)
+    static let vagueWhen = Rx(#"any ?time|unspecified|not (specified|said|given)|unknown|^\s*(nothing|none|n/?a|later|soon|sometime|some time|eventually)\s*$"#)
+    static let clauses = Rx(#"[.?!;]\s+|,?\s+and then\s+|,\s+then\s+"#)
+    /// Eating out isn't shopping: "grab some Chinese food from a restaurant".
+    static let eatingOut = Rx(#"\b(restaurant|takeaway|take-away|takeout|chippy|caf[eé]|pub|bar|drive-?thru|deliveroo|just eat|uber eats|order in|eat out|eating out)\b"#)
     static let buyTodo = Rx(
         #"^(?:buy|get|grab|pick up|pick-up|order)\s+(?:some\s+|more\s+|a\s+|an\s+|the\s+|new\s+)?(.+?)"# +
         #"(?:\s+(?:tomorrow|today|tonight|later|on the way.*|from .*|at the .*|for (?:the|a) .*|when .*))?$"#)
@@ -106,11 +109,14 @@ public enum ActionRules {
         var out: [ExtractedAction] = []
         for line in lines {
             let t = text(line)
-            for rule in buyRules {
-                for m in rule.all(t) {
-                    for it in splitItems(m[1]) where it.count >= 2 && it.count <= 40 &&
-                        !it.split(separator: " ").contains(where: { notItems.contains($0.lowercased()) }) {
-                        out.append(ExtractedAction(type: .buy, title: capitalised(it)))
+            // Clause by clause, so "go to the pub and then get some milk" still finds the milk.
+            for clause in clauses.split(t) where !eatingOut.test(clause) {
+                for rule in buyRules {
+                    for m in rule.all(clause) {
+                        for it in splitItems(m[1]) where it.count >= 2 && it.count <= 40 &&
+                            !it.split(separator: " ").contains(where: { notItems.contains($0.lowercased()) }) {
+                            out.append(ExtractedAction(type: .buy, title: capitalised(it)))
+                        }
                     }
                 }
             }
@@ -152,12 +158,13 @@ public enum ActionRules {
                 out.append(ExtractedAction(type: .todo, title: String(capitalised(task).prefix(100))))
             }
         }
-        for e in events where !e.what.isEmpty {
-            let whenText = e.when.flatMap { $0.isEmpty ? nil : $0 }
+        for e in events where !e.what.isEmpty && !bogusEventTitle.test(e.what.lowercased()) {
+            // Only real plans: a day or a time actually said ("Thursday at 3"), not "later" or "nothing".
+            guard let whenText = e.when.flatMap({ $0.isEmpty ? nil : $0 }), !vagueWhen.test(whenText.lowercased()),
+                  let resolved = WhenParser.parse(whenText, reference: conversationStart, calendar: calendar) else { continue }
             out.append(ExtractedAction(
                 type: .event, title: String(capitalised(e.what).prefix(80)), whenText: whenText,
-                place: e.place.flatMap { $0.isEmpty ? nil : $0 },
-                resolved: whenText.flatMap { WhenParser.parse($0, reference: conversationStart, calendar: calendar) }))
+                place: e.place.flatMap { $0.isEmpty ? nil : $0 }, resolved: resolved))
         }
         return out
     }

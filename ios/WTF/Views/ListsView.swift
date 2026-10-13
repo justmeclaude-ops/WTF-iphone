@@ -56,7 +56,7 @@ struct ListsView: View {
                     }
                 } header: {
                     HStack {
-                        Text("To Do").font(.title2.bold()).foregroundStyle(.blue).textCase(nil)
+                        Text("To Do").font(.title2.bold()).foregroundStyle(.primary).textCase(nil)
                         Spacer()
                         if !todo.isEmpty {
                             ShareLink(item: "To do:\n" + todo.map { "\u{2022} \($0.title)" + (detail($0).map { " (\($0))" } ?? "") }.joined(separator: "\n")) {
@@ -127,16 +127,16 @@ struct SuggestionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon).foregroundStyle(.white)
-                .frame(width: 29, height: 29).background(color, in: .rect(cornerRadius: 7))
+            Image(systemName: icon).font(.body).foregroundStyle(.secondary)
+                .frame(width: 29, height: 29)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title).font(.headline)
                 if let d = detail(item) { Text(d).font(.subheadline).foregroundStyle(.secondary) }
                 if item.type != "EVENT" { Text("Add to your to-dos?").font(.subheadline).foregroundStyle(.secondary) }
                 if let quote = item.quote { Text("\u{201C}\(quote)\u{201D}").font(.footnote).foregroundStyle(.tertiary).lineLimit(2) }
                 HStack {
-                    Button(item.type == "EVENT" ? "Add to Calendar" : "Add", action: onAccept).buttonStyle(.borderedProminent)
-                    Button("Dismiss", action: onDismiss).buttonStyle(.bordered)
+                    Button(item.type == "EVENT" ? "Add to Calendar" : "Add", action: onAccept).buttonStyle(.bordered)
+                    Button("Not Now", action: onDismiss).buttonStyle(.borderless).foregroundStyle(.secondary)
                 }
                 .buttonBorderShape(.capsule)
                 .padding(.top, 4)
@@ -146,7 +146,6 @@ struct SuggestionRow: View {
     }
 
     private var icon: String { item.type == "EVENT" ? "calendar" : item.type == "BUY" ? "cart" : "checklist" }
-    private var color: Color { item.type == "EVENT" ? .red : item.type == "BUY" ? .green : .blue }
 }
 
 /// A Reminders row: the ring fills with a dot when ticked.
@@ -160,7 +159,7 @@ struct CheckRow: View {
             Button(action: onTick) {
                 Image(systemName: ticking ? "largecircle.fill.circle" : "circle")
                     .font(.title2)
-                    .foregroundStyle(ticking ? Color.blue : Color.secondary)
+                    .foregroundStyle(ticking ? Color.primary : Color.secondary)
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)

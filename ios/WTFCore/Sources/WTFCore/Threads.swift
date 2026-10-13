@@ -28,17 +28,15 @@ public struct TopicThread: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
-/// What the AI made of the newest lines.
+/// What the AI made of the newest lines: the topics they moved through, in order.
 public struct TopicChange: Sendable {
-    public var sameTopic: Bool
-    public var newTopic: String
-    public var previousFinished: Bool
+    public var topics: [String]
+    /// For each topic but the last: dropped part-way (true) or finished (false).
+    public var dropped: [Bool]
+    /// What you were in the middle of saying when a topic was dropped.
     public var leftAt: String
-    /// 1-based number of an earlier topic the new lines go back to, or 0.
-    public var returnsTo: Int
-    public init(sameTopic: Bool, newTopic: String, previousFinished: Bool, leftAt: String, returnsTo: Int) {
-        self.sameTopic = sameTopic; self.newTopic = newTopic; self.previousFinished = previousFinished
-        self.leftAt = leftAt; self.returnsTo = returnsTo
+    public init(topics: [String], dropped: [Bool] = [], leftAt: String = "") {
+        self.topics = topics; self.dropped = dropped; self.leftAt = leftAt
     }
 }
 
@@ -48,28 +46,51 @@ public enum Threads {
         threads.last?.status == .current ? Array(threads.dropLast()) : threads
     }
 
-    /// Applies what the AI decided about lines heard between [from] and [to].
+    /// Applies what the AI made of lines heard between [from] and [to]. Several topics in one
+    /// stretch share its time evenly (the recording doesn't say exactly where each began).
     public static func apply(_ change: TopicChange, to threads: [TopicThread], from: Date, to: Date) -> [TopicThread] {
+        var titles: [String] = []
+        for t in change.topics.compactMap(clean) where titles.last.map({ !same($0, t) }) ?? true { titles.append(t) }
         var out = threads
-        let title = clean(change.newTopic)
-        guard let lastIndex = out.indices.last, out[lastIndex].status == .current else {
-            out.append(TopicThread(title: title ?? "Chatting", start: from, end: to))
+        let currentIndex = out.indices.last.flatMap { out[$0].status == .current ? $0 : nil }
+        guard !titles.isEmpty else {
+            if let i = currentIndex { out[i].end = max(out[i].end, to) }
             return out
         }
-        let previous = earlier(out)
-        let back = previous.indices.contains(change.returnsTo - 1) ? previous[change.returnsTo - 1] : nil
-        let newTitle = back?.title ?? title
-        // Still on it, or "new" under the same name.
-        if (change.sameTopic && back == nil) || newTitle == nil || newTitle!.caseInsensitiveCompare(out[lastIndex].title) == .orderedSame {
-            out[lastIndex].end = max(out[lastIndex].end, to)
-            return out
-        }
+        let span = max(0, to.timeIntervalSince(from)) / Double(titles.count)
         let leftAt = change.leftAt.trimmingCharacters(in: .whitespacesAndNewlines)
-        out[lastIndex].status = change.previousFinished || leftAt.isEmpty ? .finished : .hanging
-        out[lastIndex].leftAt = out[lastIndex].status == .hanging ? leftAt : nil
-        if let back, let i = out.firstIndex(where: { $0.id == back.id }), out[i].status == .hanging { out[i].status = .resumed }
-        out.append(TopicThread(title: newTitle!, start: from, end: to))
+        // The last dropped topic in this stretch is the one [leftAt] is about.
+        let lastDropped = titles.indices.dropLast().last { change.dropped.indices.contains($0) && change.dropped[$0] }
+        for (k, title) in titles.enumerated() {
+            let segFrom = from.addingTimeInterval(span * Double(k)), segTo = from.addingTimeInterval(span * Double(k + 1))
+            if let i = out.indices.last, out[i].status == .current {
+                if same(out[i].title, title) {
+                    out[i].end = max(out[i].end, segTo)
+                    continue
+                }
+                // Moving on: how did the one before end? (For one carried over from earlier, we can't tell: finished.)
+                let droppedHere = k > 0 && change.dropped.indices.contains(k - 1) && change.dropped[k - 1]
+                out[i].status = droppedHere ? .hanging : .finished
+                out[i].leftAt = droppedHere && k - 1 == lastDropped && !leftAt.isEmpty ? leftAt : nil
+                if out[i].status == .hanging && out[i].leftAt == nil { out[i].leftAt = "" }
+            }
+            // Back to something from before: that one's picked up again, under its own name.
+            var name = title
+            if let j = out.lastIndex(where: { same($0.title, title) }) {
+                name = out[j].title
+                if out[j].status == .hanging { out[j].status = .resumed }
+            }
+            out.append(TopicThread(title: name, start: segFrom, end: segTo))
+        }
         return out
+    }
+
+    /// The same topic, give or take capitals and "the".
+    static func same(_ a: String, _ b: String) -> Bool {
+        func key(_ s: String) -> String {
+            s.lowercased().split(separator: " ").filter { !["the", "a", "an", "about"].contains($0) }.joined(separator: " ")
+        }
+        return key(a) == key(b)
     }
 
     /// The conversation's over: whatever was being talked about ended with it.
@@ -101,19 +122,18 @@ public enum Threads {
             }
             p += "\n"
         }
+        let ask = """
+            List the topics these lines move through, in order (1 to 4), each named in 2 to 5 words by what is \
+            actually being talked about. Count quick tangents as topics too: that's what this is for. For each topic \
+            except the last, say whether it was dropped part-way, unfinished, or came to an end. If one was dropped, \
+            say what I was in the middle of saying about it, starting with "you were".
+            """
         if let current = threads.last, current.status == .current {
-            p += "Current topic: \(current.title)\n"
+            p += "Current topic: \(current.title) (if the new lines carry on with it, list it first under that name)\n"
             if !recent.isEmpty { p += "Just before:\n\(Prompts.tail(TranscriptFormat.compact(recent), budget: 500))\n" }
-            p += "\nNew lines:\n\(Prompts.tail(TranscriptFormat.compact(new), budget: 900))\n\n"
-            p += """
-                Do the new lines carry on the current topic? If they move on, name the new topic in 2 to 5 words, \
-                say whether "\(current.title)" came to a natural end or was dropped part-way, and if it was dropped, \
-                what I was in the middle of saying, in under 15 words, starting with "you were". If the new lines go \
-                back to one of the earlier topics, give its number.
-                """
+            p += "\nNew lines:\n\(Prompts.tail(TranscriptFormat.compact(new), budget: 900))\n\n" + ask
         } else {
-            p += "Lines from a conversation:\n\(Prompts.tail(TranscriptFormat.compact(new), budget: 900))\n\n"
-            p += "Name what these lines are about in 2 to 5 words. This is a new topic."
+            p += "Lines from a conversation:\n\(Prompts.tail(TranscriptFormat.compact(new), budget: 900))\n\n" + ask
         }
         return p
     }

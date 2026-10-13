@@ -37,7 +37,7 @@ struct AskView: View {
                     LazyVStack(alignment: .leading, spacing: 4) {
                         if let problem = model.problem {
                             Label(problem, systemImage: "exclamationmark.triangle.fill")
-                                .font(.footnote).foregroundStyle(.orange)
+                                .font(.footnote).foregroundStyle(.secondary)
                                 .padding(.bottom, 8)
                                 .onTapGesture { model.setListening(true) }
                         }
@@ -69,7 +69,6 @@ struct AskView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let trail {
                     ThreadTrail(threads: trail.threads) { model.askAbout($0, in: trail.id) }
-                        .background(.bar)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -93,7 +92,7 @@ struct AskView: View {
                 ForEach(suggestions, id: \.self) { q in
                     Button { model.ask(q) } label: {
                         HStack {
-                            Image(systemName: "sparkles").foregroundStyle(.indigo)
+                            Image(systemName: "sparkles").foregroundStyle(.secondary)
                             Text(q).foregroundStyle(.primary)
                             Spacer()
                         }
@@ -147,9 +146,9 @@ struct Bubble: View {
             if message.fromUser { Spacer(minLength: 60) }
             Text(message.text)
                 .padding(.horizontal, 14).padding(.vertical, 9)
-                .foregroundStyle(message.fromUser ? .white : (message.isError ? .red : .primary))
+                .foregroundStyle(message.fromUser ? Color(.systemBackground) : (message.isError ? Color.secondary : Color.primary))
                 .background(
-                    message.fromUser ? AnyShapeStyle(Color.blue) : AnyShapeStyle(message.isError ? Color.red.opacity(0.12) : Color(.systemGray5)),
+                    message.fromUser ? AnyShapeStyle(Color(.label)) : AnyShapeStyle(Color(.systemGray5)),
                     in: BubbleShape(fromUser: message.fromUser, tail: tail)
                 )
                 .contextMenu {

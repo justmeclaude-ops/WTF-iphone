@@ -22,26 +22,22 @@ struct Appointment {
 
 @Generable
 struct FoundActions {
-    @Guide(description: "Things to buy, one item each, e.g. Milk")
+    @Guide(description: "Groceries or household things to buy from a shop, one item each, e.g. Milk. Not meals out or takeaways. Usually empty")
     var buy: [String]
     @Guide(description: "Things the speaker said they would do, as short tasks, e.g. Ring the landlord")
     var todo: [String]
-    @Guide(description: "Appointments or plans that have a day or a time")
+    @Guide(description: "Appointments or plans with a day or a time actually said. Usually empty")
     var appointments: [Appointment]
 }
 
 @Generable
 struct TopicStep {
-    @Guide(description: "True if the new lines carry on the current topic")
-    var sameTopic: Bool
-    @Guide(description: "If the topic changed, or there is no topic yet: its name in 2 to 5 words, e.g. Mum's birthday present. Otherwise empty")
-    var newTopic: String
-    @Guide(description: "If the topic changed: true if the previous topic came to a natural end, false if it was dropped part-way")
-    var previousFinished: Bool
-    @Guide(description: "If the previous topic was dropped part-way: what I was in the middle of saying, under 15 words, starting with 'you were'. Otherwise empty")
+    @Guide(description: "The topics the new lines move through, in order, 1 to 4, each named in 2 to 5 words by what is being talked about, e.g. Where to eat tonight")
+    var topics: [String]
+    @Guide(description: "For each topic except the last, in the same order: true if it was dropped part-way, unfinished; false if it came to an end")
+    var dropped: [Bool]
+    @Guide(description: "If a topic was dropped part-way: what I was in the middle of saying about it, under 15 words, starting with 'you were'. Otherwise empty")
     var leftAt: String
-    @Guide(description: "If the new lines go back to one of the numbered earlier topics, its number; otherwise 0")
-    var returnsTo: Int
 }
 
 /// Apple Intelligence's on-device model: summaries, list items and answers, free and private.
@@ -83,8 +79,7 @@ enum Brain {
     static func topic(_ prompt: String) async throws -> TopicChange {
         let session = LanguageModelSession(model: model, instructions: "You follow the topics of a conversation as it wanders, for someone who loses their train of thought.")
         let step = try await session.respond(to: prompt, generating: TopicStep.self).content
-        return TopicChange(sameTopic: step.sameTopic, newTopic: step.newTopic, previousFinished: step.previousFinished,
-                           leftAt: step.leftAt, returnsTo: step.returnsTo)
+        return TopicChange(topics: step.topics, dropped: step.dropped, leftAt: step.leftAt)
     }
 
     /// A short answer to read aloud, given up on after [seconds].

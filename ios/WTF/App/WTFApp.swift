@@ -45,6 +45,8 @@ struct RootView: View {
             Tab("Lists", systemImage: "checklist", value: 2) { ListsView().modifier(TabSwipe()) }
             Tab("Settings", systemImage: "gear", value: 3) { SettingsView().modifier(TabSwipe()) }
         }
+        // Black and white throughout; colour only where it means something (Settings, deleting).
+        .tint(.primary)
         .sensoryFeedback(.selection, trigger: model.tab)
     }
 }
@@ -74,35 +76,25 @@ struct TabSwipe: ViewModifier {
     }
 }
 
-/// Listening on or off, in words: a red "Start Listening" when it's off, a green breathing
-/// "Listening" when it's on (tap to pause).
+/// Listening on or off, in words, in the app's quiet black and white: "Listen" with a mic when
+/// it's off, a moving waveform and "Listening" when it's on (tap to pause).
 struct ListeningButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Group {
-            if model.recording {
-                Button { model.setListening(false) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "waveform").symbolEffect(.variableColor.iterative, options: .repeating)
-                        Text("Listening").font(.subheadline.weight(.semibold))
-                    }
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 4)
+        Button { model.setListening(!model.recording) } label: {
+            HStack(spacing: 6) {
+                if model.recording {
+                    Image(systemName: "waveform").symbolEffect(.variableColor.iterative, options: .repeating)
+                } else {
+                    Image(systemName: "mic")
                 }
-                .accessibilityHint("Pauses listening")
-            } else {
-                Button { model.setListening(true) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "mic.fill")
-                        Text("Start Listening").font(.subheadline.weight(.semibold))
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                Text(model.recording ? "Listening" : "Listen").font(.subheadline.weight(.medium))
             }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 4)
         }
+        .accessibilityHint(model.recording ? "Pauses listening" : "Starts listening")
         .sensoryFeedback(.impact(weight: .medium), trigger: model.recording)
     }
 }

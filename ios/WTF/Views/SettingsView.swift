@@ -21,7 +21,7 @@ struct SettingsView: View {
         NavigationStack(path: $model.settingsPath) {
             Form {
                 Section {
-                    Toggle("Listen Continuously", isOn: Binding(get: { model.recording }, set: { model.setListening($0) }))
+                    Toggle("Listen Continuously", isOn: Binding(get: { model.recording }, set: { model.setListening($0) })).tint(.green)
                 } footer: {
                     Text("Only speech is kept: silence is never stored, and audio is deleted once it's transcribed. iPhones stop apps that are swiped away, so leave WTF open in the background.")
                 }
@@ -41,7 +41,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Tell Voices Apart", isOn: $voicesOn)
+                    Toggle("Tell Voices Apart", isOn: $voicesOn).tint(.green)
                     if voicesOn {
                         LabeledContent("Voice Models") {
                             if voicesLoading { ProgressView() }
@@ -83,6 +83,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .tint(.blue) // Settings keeps iOS's usual colours
             .navigationDestination(for: String.self) { page in
                 if page == "people" { PeopleView() } else { DiagnosticsView() }
             }

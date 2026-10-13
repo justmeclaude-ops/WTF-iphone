@@ -33,11 +33,10 @@ struct ThreadTrail: View {
 
 struct ThreadChip: View {
     let thread: TopicThread
-    @State private var glow = false
 
     private var hanging: Bool { thread.status == .hanging }
     private var current: Bool { thread.status == .current }
-    private var color: Color { hanging ? .orange : current ? .accentColor : .secondary }
+    private var color: Color { current || hanging ? .primary : .secondary }
 
     var body: some View {
         HStack(spacing: 5) {
@@ -51,13 +50,9 @@ struct ThreadChip: View {
         .font(.subheadline.weight(current ? .semibold : .regular))
         .foregroundStyle(color)
         .padding(.horizontal, 12).padding(.vertical, 7)
-        .background(Capsule().fill(color.opacity(hanging || current ? 0.15 : 0.08)))
-        .overlay(Capsule().strokeBorder(Color.orange, lineWidth: 1.5).opacity(hanging ? 1 : 0))
-        .shadow(color: hanging ? .orange.opacity(glow ? 0.55 : 0.1) : .clear, radius: glow ? 8 : 2)
-        .onAppear {
-            guard hanging else { return }
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { glow = true }
-        }
+        // Left hanging: an open, dashed outline, as if it's waiting to be finished.
+        .background(Capsule().fill(Color.primary.opacity(current ? 0.1 : 0.05)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3])).opacity(hanging ? 1 : 0))
         .accessibilityLabel(thread.title + (hanging ? ", left hanging" : current ? ", talking about now" : ""))
     }
 }
@@ -71,11 +66,11 @@ struct ThreadList: View {
         ForEach(threads) { t in
             Button { onTap(t) } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: icon(t)).foregroundStyle(t.status == .hanging ? Color.orange : t.status == .current ? .accentColor : .secondary)
+                    Image(systemName: icon(t)).foregroundStyle(t.status == .current || t.status == .hanging ? Color.primary : Color.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(t.title).foregroundStyle(.primary)
                         if t.status == .hanging, let left = t.leftAt, !left.isEmpty {
-                            Text(left.prefix(1).uppercased() + left.dropFirst()).font(.footnote).foregroundStyle(.orange)
+                            Text(left.prefix(1).uppercased() + left.dropFirst()).font(.footnote).italic().foregroundStyle(.secondary)
                         }
                     }
                     Spacer()

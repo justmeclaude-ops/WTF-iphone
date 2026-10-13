@@ -79,8 +79,8 @@ struct TranscribingRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "hourglass").foregroundStyle(.white)
-                .frame(width: 29, height: 29).background(.orange, in: .rect(cornerRadius: 7))
+            Image(systemName: "hourglass").foregroundStyle(.secondary)
+                .frame(width: 29, height: 29)
             if let p = model.transcribing {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(p.total > 1 ? "Transcribing \(p.done + 1) of \(p.total)\u{2026}" : "Transcribing\u{2026}")
@@ -106,7 +106,7 @@ struct ConversationRow: View {
                 Text(displayTitle(conversation)).font(.headline).lineLimit(1)
                 Spacer()
                 if !conversation.closed && conversation.summary == nil {
-                    Label("Live", systemImage: "circle.fill").font(.subheadline).foregroundStyle(.green).labelStyle(.titleAndIcon)
+                    Label("Live", systemImage: "circle.fill").font(.subheadline).foregroundStyle(.secondary).labelStyle(.titleAndIcon)
                         .imageScale(.small)
                 } else {
                     Text(conversation.start, format: .dateTime.hour().minute()).font(.subheadline).foregroundStyle(.secondary)
@@ -237,12 +237,10 @@ struct ConversationView: View {
     }
 }
 
-/// Each voice its own colour, the same every time; yours is the accent colour.
+/// Speakers in quiet type: you in full black (or white), everyone else in grey.
 enum VoiceColor {
-    static let palette: [Color] = [.orange, .purple, .green, .pink, .teal, .indigo, .brown, .cyan]
-    static func of(_ label: String) -> Color {
-        if label == Labels.me { return .accentColor }
-        let n = label.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+    static func of(_ label: String) -> Color { label == Labels.me ? .primary : .secondary }
+}
         return palette[n % palette.count]
     }
 }

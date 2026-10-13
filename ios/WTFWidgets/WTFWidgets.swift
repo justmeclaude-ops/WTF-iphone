@@ -40,7 +40,7 @@ struct ListeningLiveActivity: Widget {
                 Listening()
             } compactTrailing: {
                 if s.hanging > 0 {
-                    Text("\(s.hanging)").font(.caption2.bold()).foregroundStyle(.orange)
+                    Text("\(s.hanging)").font(.caption2.bold()).foregroundStyle(.white)
                 } else if let topic = s.topic {
                     Text(topic).font(.caption2).lineLimit(1).frame(maxWidth: 70)
                 }
@@ -73,7 +73,7 @@ struct LockScreenCard: View {
                 HStack { Listening(); Text(state.since, style: .timer).font(.caption2.monospacedDigit()) }
                 Text(state.topic ?? "Listening").font(.headline).lineLimit(2)
                 if state.hanging > 0 {
-                    Text("\(state.hanging) left hanging").font(.caption2).foregroundStyle(.orange)
+                    Text("\(state.hanging) left hanging").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             .padding(8)
@@ -105,9 +105,9 @@ struct Trail: View {
                     .font(.caption.weight(step.current ? .semibold : .regular))
                     .lineLimit(1)
                     .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(step.hanging ? Color.orange.opacity(0.25) : step.current ? Color.white.opacity(0.18) : Color.white.opacity(0.08)))
-                    .overlay(Capsule().strokeBorder(step.hanging ? Color.orange : .clear, lineWidth: 1))
-                    .foregroundStyle(step.hanging ? Color.orange : .white)
+                    .background(Capsule().fill(Color.white.opacity(step.current ? 0.18 : 0.08)))
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [3, 3])).opacity(step.hanging ? 1 : 0))
+                    .foregroundStyle(.white)
             }
         }
     }

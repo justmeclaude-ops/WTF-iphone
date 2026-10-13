@@ -120,31 +120,28 @@ final class VoicesTests: XCTestCase {
 final class ThreadsTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
     func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
-    func change(same: Bool = false, _ topic: String = "", finished: Bool = false, left: String = "", back: Int = 0) -> TopicChange {
-        TopicChange(sameTopic: same, newTopic: topic, previousFinished: finished, leftAt: left, returnsTo: back)
-    }
-
     func testATangentLeavesTheThreadHangingAndComingBackPicksItUp() {
-        var threads = Threads.apply(change(" \"Mum's birthday present.\" "), to: [], from: at(0), to: at(25))
-        XCTAssertEqual(threads.map(\.title), ["Mum's birthday present"])
-        threads = Threads.apply(change(same: true), to: threads, from: at(25), to: at(50))
-        XCTAssertEqual(threads.count, 1)
-        XCTAssertEqual(threads[0].end, at(50))
-        // Off on a tangent mid-sentence.
-        threads = Threads.apply(change("The MOT", left: "you were about to say what you'd got her"), to: threads, from: at(50), to: at(75))
-        XCTAssertEqual(threads.map(\.status), [.hanging, .current])
-        XCTAssertEqual(threads[0].leftAt, "you were about to say what you'd got her")
-        XCTAssertEqual(Threads.hanging(threads).map(\.title), ["Mum's birthday present"])
-        XCTAssertTrue(Threads.prompt(threads, recent: "", new: "[10:00:00] You: Anyway.").contains("1. Mum's birthday present (dropped part-way)"))
-        // The MOT wraps up, and back to the present.
-        threads = Threads.apply(change("Birthday", finished: true, back: 1), to: threads, from: at(75), to: at(100))
-        XCTAssertEqual(threads.map(\.title), ["Mum's birthday present", "The MOT", "Mum's birthday present"])
-        XCTAssertEqual(threads.map(\.status), [.resumed, .finished, .current])
-        XCTAssertTrue(Threads.hanging(threads).isEmpty)
+        // "Chinese food? ... Japanese? I like samurai ... The Last Samurai ... Mission Impossible ... oh yeah, Chinese food."
+        let change = TopicChange(topics: ["Chinese food", "Japanese food", "Films", "chinese food."], dropped: [true, false, false],
+                                 leftAt: "you were saying where to get Chinese food")
+        var threads = Threads.apply(change, to: [], from: at(0), to: at(40))
+        XCTAssertEqual(threads.map(\.title), ["Chinese food", "Japanese food", "Films", "Chinese food"])
+        XCTAssertEqual(threads.map(\.status), [.resumed, .finished, .finished, .current])
+        XCTAssertEqual(threads[0].leftAt, "you were saying where to get Chinese food")
+        XCTAssertEqual(threads[1].start, at(10))
+        // Carrying on: the current one just gets longer.
+        threads = Threads.apply(TopicChange(topics: ["Chinese food"]), to: threads, from: at(40), to: at(60))
+        XCTAssertEqual(threads.count, 4)
+        XCTAssertEqual(threads[3].end, at(60))
+        // Off on another tangent mid-sentence, left hanging.
+        threads = Threads.apply(TopicChange(topics: ["Chinese food", "The MOT"], dropped: [true], leftAt: "you were about to pick a place"),
+                                to: threads, from: at(60), to: at(80))
+        XCTAssertEqual(threads.suffix(2).map(\.status), [.hanging, .current])
+        XCTAssertEqual(Threads.hanging(threads).map(\.title), ["Chinese food"])
+        XCTAssertTrue(Threads.prompt(threads, recent: "", new: "[10:00:00] You: Anyway.").contains("(dropped part-way)"))
         XCTAssertEqual(Threads.close(threads).last?.status, .finished)
-        // The same name again isn't a new topic; nonsense numbers are ignored.
-        let again = Threads.apply(change("mum's birthday present", back: 9), to: threads, from: at(100), to: at(120))
-        XCTAssertEqual(again.count, 3)
+        // Nothing usable: unchanged but longer.
+        XCTAssertEqual(Threads.apply(TopicChange(topics: [" "]), to: threads, from: at(80), to: at(90)).count, threads.count)
     }
 
     func testSpokenRecapIsShort() {
@@ -163,6 +160,14 @@ final class ThreadsTests: XCTestCase {
         let lines = ["[11:43:10] Speaker 1: We need to get a good answer on that.", "[11:43:20] Speaker 1: Can you pick up some milk and bread?"]
         let found = ActionRules.ruleActions(lines, conversationStart: Date(), title: nil, youOnly: false).filter { $0.type == .buy }.map(\.title)
         XCTAssertEqual(Set(found), ["Milk", "Bread"]) // (repeats are merged later)
+    }
+
+    func testEatingOutAndVaguePlansArentListItems() {
+        let lines = ["[12:50:00] Speaker 1: I want to go and grab some Chinese food from a restaurant later."]
+        XCTAssertTrue(ActionRules.ruleActions(lines, conversationStart: Date(), title: nil, youOnly: false).filter { $0.type == .buy }.isEmpty)
+        let model = ActionRules.fromModel(buy: [], todo: [], events: [("Samurai", "Nothing", nil), ("Chinese food", "Later", "Restaurant"),
+                                                                     ("Dentist", "Thursday at 3", nil)], conversationStart: Date())
+        XCTAssertEqual(model.map(\.title), ["Dentist"])
     }
 
     func testVocabulary() {
