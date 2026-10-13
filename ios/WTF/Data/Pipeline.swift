@@ -261,7 +261,8 @@ actor Pipeline {
     /// it's over), so recaps, lists and answers see the whole of it.
     private func remember(_ c: Conversation, force: Bool = false) async {
         guard Brain.notReadyReason == nil, let new = unremembered[c.id], !new.isEmpty else { return }
-        guard force || new.split(whereSeparator: \.isWhitespace).count >= 40 else { return }
+        // About a minute of talk at a time: often enough to keep up, rarely enough to spare the battery.
+        guard force || new.split(whereSeparator: \.isWhitespace).count >= 120 else { return }
         unremembered[c.id] = nil
         let prompt = Prompts.memory(c.memory, new: new)
         guard let notes = await withDeadline(40, { await Log.attempt("Conversation notes", { try await Brain.remember(prompt) }) }) else { return }
