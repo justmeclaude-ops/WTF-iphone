@@ -185,6 +185,10 @@ final class ThreadsTests: XCTestCase {
         let byTitle = Dictionary(events.map { ($0.title, $0.resolved.map { [$0.month, $0.day] } ?? []) }, uniquingKeysWith: { a, _ in a })
         XCTAssertEqual(byTitle["Mom's birthday"], [11, 2])
         XCTAssertEqual(byTitle["Dentist"], [10, 20])
+        let merged = ["[13:17:30] Speaker 1: Yeah, do it tonight or you'll forget what about your dentist? Isn't that next Tuesday at half three? I will do that after dinner tonight."]
+        let e2 = ActionRules.ruleActions(merged, conversationStart: ref, title: nil, youOnly: false).filter { $0.type == .event }
+        XCTAssertEqual(e2.map(\.title), ["Dentist"])
+        XCTAssertEqual(e2.first?.resolved.map { [$0.month, $0.day, $0.hour ?? -1] }, [10, 20, 15])
         XCTAssertEqual(TranscriptFormat.clean("Right, #um so we need #oh, did you"), "Right, so we need did you")
     }
 
@@ -193,6 +197,24 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(Prompts.sentences(about: "Garage appointment", in: lines), ["The garage said Thursday."])
         XCTAssertEqual(Prompts.sentences(about: "Mom's birthday", in: lines), ["Right, so we need to sort mom's birthday."])
         XCTAssertTrue(Prompts.thread("MOT", leftAt: nil, lines: lines).contains("remind me where I'd got to with MOT"))
+    }
+
+    func testCorrectionsFixAWordButNeverRewrite() {
+        let line = "[13:16:00] Speech: so I was thinking we bucked the back room at the crown for Saturday the first at seven"
+        let fixed = Corrections.apply(["1. so I was thinking we booked the back room at the Crown for Saturday the first at seven"], to: [line])
+        XCTAssertEqual(fixed, ["[13:16:00] Speech: so I was thinking we booked the back room at the Crown for Saturday the first at seven"])
+        // A rewrite is refused.
+        let rewrite = Corrections.apply(["We'll reserve a private room at the Crown pub on Saturday evening."], to: [line])
+        XCTAssertEqual(rewrite, [line])
+        XCTAssertTrue(Corrections.prompt([line]).contains("1. so I was thinking we bucked"))
+    }
+
+    func testTopicsAreSubjectsNotPhrases() {
+        let t0 = Date(timeIntervalSince1970: 0)
+        var threads = Threads.apply(TopicChange(topics: ["Mum's birthday", "Perfect", "Quick tangent"]), to: [], from: t0, to: t0.addingTimeInterval(20))
+        XCTAssertEqual(threads.map(\.title), ["Mum's birthday"])
+        threads = Threads.apply(TopicChange(topics: ["Mom's birthday present"]), to: threads, from: t0.addingTimeInterval(20), to: t0.addingTimeInterval(40))
+        XCTAssertEqual(threads.count, 1, "\(threads.map(\.title))")
     }
 
     func testVocabulary() {

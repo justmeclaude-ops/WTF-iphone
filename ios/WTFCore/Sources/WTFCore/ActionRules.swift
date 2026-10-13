@@ -137,8 +137,16 @@ public enum ActionRules {
             let sentences = Rx(#"(?<=[.?!])\s+"#).split(t)
             for (i, sentence) in sentences.enumerated() {
                 let noun = eventNoun.first(sentence)
-                var candidates = [sentence]
+                // "after dinner tonight" is when, not a dinner to go to.
+                if noun != nil, Rx(#"\b(after|before|during|over|with)\s+(dinner|lunch|tea|breakfast|drinks)\b"#).test(sentence) { continue }
+                // The date that follows the thing first ("dentist? ... next Tuesday"), then anything before it
+                // ("do it tonight or you'll forget what about your dentist" must not be tonight).
+                var candidates: [String] = []
+                if let noun, let r = sentence.lowercased().range(of: noun[2]) {
+                    candidates.append(String(sentence[r.lowerBound...]))
+                }
                 if noun != nil, i + 1 < sentences.count, !eventNoun.test(sentences[i + 1]) { candidates.append(sentences[i + 1]) }
+                candidates.append(sentence)
                 guard let (said, resolved) = candidates.lazy.compactMap({ c in
                     WhenParser.parse(c, reference: conversationStart, calendar: calendar).map { (c, $0) }
                 }).first else { continue }

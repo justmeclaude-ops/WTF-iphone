@@ -52,7 +52,9 @@ public enum Threads {
     /// stretch share its time evenly (the recording doesn't say exactly where each began).
     public static func apply(_ change: TopicChange, to threads: [TopicThread], from: Date, to: Date) -> [TopicThread] {
         var titles: [String] = []
-        for t in change.topics.compactMap(clean) where titles.last.map({ !same($0, t) }) ?? true { titles.append(t) }
+        for t in change.topics.prefix(4).compactMap(clean) where !notTopics.test(t.lowercased()) && (titles.last.map({ !same($0, t) }) ?? true) {
+            titles.append(t)
+        }
         var out = threads
         let currentIndex = out.indices.last.flatMap { out[$0].status == .current ? $0 : nil }
         guard !titles.isEmpty else {
@@ -89,13 +91,24 @@ public enum Threads {
         return out
     }
 
-    /// The same topic, give or take capitals and "the".
+    /// The same topic, give or take capitals, "the", Mum/Mom, or a word ("Mum's present" and
+    /// "Mum's birthday present").
     static func same(_ a: String, _ b: String) -> Bool {
-        func key(_ s: String) -> String {
-            s.lowercased().split(separator: " ").filter { !["the", "a", "an", "about"].contains($0) }.joined(separator: " ")
+        func key(_ s: String) -> [String] {
+            s.lowercased().replacingOccurrences(of: "mom", with: "mum").split(separator: " ")
+                .map { $0.trimmingCharacters(in: .punctuationCharacters) }
+                .filter { !["the", "a", "an", "about", "of", "for", "and", "my", "your", "her", "his"].contains($0) }
         }
-        return key(a) == key(b)
+        let x = key(a), y = key(b)
+        if x == y { return true }
+        guard !x.isEmpty, !y.isEmpty else { return false }
+        let shared = Set(x).intersection(y).count
+        return Double(shared) / Double(min(x.count, y.count)) >= 0.99 && min(x.count, y.count) >= 2
+            || (shared >= 2 && Double(shared) / Double(max(x.count, y.count)) >= 0.66)
     }
+
+    /// Not topics: what someone said, not what it was about.
+    static let notTopics = Rx(#"^(perfect|okay|ok|right|yeah|yes|no|anyway|sorry|quick tangent|tangent|don't let me|do not let me|let's|wait|what|so)\b"#)
 
     /// The conversation's over: whatever was being talked about ended with it.
     public static func close(_ threads: [TopicThread]) -> [TopicThread] {
@@ -127,10 +140,12 @@ public enum Threads {
             p += "\n"
         }
         let ask = """
-            List the topics these lines move through, in order (1 to 4), each named in 2 to 5 words by what is \
-            actually being talked about. Count quick tangents as topics too: that's what this is for. For each topic \
-            except the last, say whether it was dropped part-way, unfinished, or came to an end. If one was dropped, \
-            say what I was in the middle of saying about it, starting with "you were".
+            List the subjects these lines move through, in order: usually one or two, at most three. Name each \
+            subject in 2 to 4 words (e.g. "Mum's birthday", "The MOT", "Shopping", "Prison news"), not with words \
+            someone said ("Perfect", "Quick tangent"). If a subject from the list above comes back, use its name \
+            exactly. A quick tangent counts as a subject. For each subject except the last, say whether it was \
+            dropped part-way, unfinished, or came to an end. If one was dropped, say what I was in the middle of \
+            saying about it, starting with "you were".
             """
         if let current = threads.last, current.status == .current {
             p += "Current topic: \(current.title) (if the new lines carry on with it, list it first under that name)\n"

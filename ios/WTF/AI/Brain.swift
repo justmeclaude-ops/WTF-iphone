@@ -31,6 +31,12 @@ struct FoundActions {
 }
 
 @Generable
+struct CorrectedLines {
+    @Guide(description: "Every line, numbered as given, with only clearly misheard words fixed")
+    var lines: [String]
+}
+
+@Generable
 struct TopicStep {
     @Guide(description: "The topics the new lines move through, in order, 1 to 4, each named in 2 to 5 words by what is being talked about, e.g. Where to eat tonight")
     var topics: [String]
@@ -75,6 +81,12 @@ enum Brain {
     static func actions(lines: [String], start: Date) async throws -> FoundActions {
         let session = LanguageModelSession(model: model, instructions: "You pick out appointments, shopping and tasks from conversations. Only what was actually said.")
         return try await session.respond(to: Prompts.actions(lines: lines, conversationStart: start), generating: FoundActions.self).content
+    }
+
+    /// The lines with misheard words fixed from context (checked by Corrections before use).
+    static func correct(_ lines: [String]) async throws -> [String] {
+        let session = LanguageModelSession(model: model, instructions: "You fix words that speech recognition misheard, and change nothing else.")
+        return try await session.respond(to: Corrections.prompt(lines), generating: CorrectedLines.self).content.lines
     }
 
     /// Which topic the newest lines belong to: the thread map's step.

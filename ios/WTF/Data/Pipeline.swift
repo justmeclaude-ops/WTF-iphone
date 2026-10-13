@@ -340,13 +340,30 @@ actor Pipeline {
             let next = toFollow.removeFirst()
             let id = next.id
             guard let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first else { continue }
-            let before = c.transcript.hasSuffix(next.text) ? String(c.transcript.dropLast(next.text.count)) : ""
-            let prompt = Threads.prompt(c.threads, recent: before, new: next.text)
+            let text = await correctMisheard(next.text, in: c)
+            let before = c.transcript.hasSuffix(text) ? String(c.transcript.dropLast(text.count)) : ""
+            let prompt = Threads.prompt(c.threads, recent: before, new: text)
             guard let change = await withDeadline(40, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }) else { continue }
             c.threads = Threads.apply(change, to: c.threads, from: next.from, to: next.to)
             try? modelContext.save()
             await showTrail(of: c)
         }
+    }
+
+    /// "Bucked the back room" → "booked": the AI fixes words the recogniser misheard, from
+    /// context; a fix is only kept if it changes a few words and leaves the rest as said.
+    private func correctMisheard(_ text: String, in c: Conversation) async -> String {
+        let lines = text.split(separator: "\n").map(String.init)
+        guard !lines.isEmpty, c.transcript.contains(text),
+              let proposed = await withDeadline(30, { await Log.attempt("Correcting misheard words", { try await Brain.correct(lines) }) })
+        else { return text }
+        let fixed = Corrections.apply(proposed, to: lines).joined(separator: "\n")
+        guard fixed != text else { return text }
+        c.transcript = c.transcript.replacingOccurrences(of: text, with: fixed)
+        try? modelContext.save()
+        Log.info("Corrected misheard words in \(zip(lines, fixed.split(separator: "\n")).filter { $0.0 != String($0.1) }.count) line(s)")
+        await suggest(for: c, found: ruleActions(c))
+        return fixed
     }
 
     /// Puts the latest conversation's trail on the Lock Screen and in the Dynamic Island.
