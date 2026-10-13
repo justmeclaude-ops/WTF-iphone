@@ -66,7 +66,7 @@ struct SettingsView: View {
                 } header: { Text("Conversations") }
 
                 Section {
-                    Text("Settings › Action Button › Shortcut › WTF › Ask WTF. Then a press of the Action button asks \u{201C}\(AppModel.quickQuestion)\u{201D}.")
+                    Text("Settings › Action Button › Shortcut › WTF › Ask WTF. Then a press tells you what you were just on about, without unlocking: read into your ears if AirPods are in, shown at the top of the screen if not.")
                         .font(.callout)
                 } header: { Text("Action Button") }
 

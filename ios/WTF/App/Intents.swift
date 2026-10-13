@@ -1,15 +1,25 @@
 import AppIntents
 
-/// "WTF?" from the Action button, a Shortcut, Siri or Spotlight.
+/// "WTF?" from the Action button (or a Shortcut): without opening the app or unlocking. With
+/// AirPods or headphones in, the answer is read into your ears; otherwise it shows at the top
+/// of the screen. Either way it's waiting in Ask when you next open WTF.
 struct AskWTFIntent: AppIntent {
     static let title: LocalizedStringResource = "Ask WTF"
-    static let description = IntentDescription("Opens WTF and asks what you were just on about.")
-    static let openAppWhenRun = true
+    static let description = IntentDescription("What you were just on about: read aloud if AirPods are in, shown on screen if not.")
+    static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
-    func perform() async throws -> some IntentResult {
-        AppModel.shared.askFromShortcut()
-        return .result()
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let model = AppModel.shared
+        let answer = await model.spokenRecap()
+        model.messages.append(ChatMessage(fromUser: true, text: AppModel.quickQuestion))
+        model.messages.append(ChatMessage(fromUser: false, text: answer))
+        if ReadAloud.headphonesOn {
+            await ReadAloud.shared.say(answer)
+            return .result(dialog: "Read out in your headphones.")
+        }
+        return .result(dialog: "\(answer)")
     }
 }
 
