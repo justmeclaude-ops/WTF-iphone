@@ -54,6 +54,9 @@ final class Conversation {
         set { memoryData = try? JSONEncoder().encode(newValue) }
     }
 
+    /// You've fixed words in it yourself: it's kept as it is, not transcribed afresh at the end.
+    var userEdited: Bool?
+
     /// Misheard words fixed in it, by the AI or by you ([LearnedFix] as JSON): applied again if
     /// the whole conversation is transcribed afresh at the end.
     var fixData: Data?

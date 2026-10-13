@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftData
 import UserNotifications
@@ -91,8 +92,12 @@ actor Pipeline {
                     await suggest(for: c, found: ruleActions(c))
                     toFollow.append((c.id, text, chunk.start, chunk.end, Doubts.of(words), Doubts.protected(words)))
                 }
-                chunk.path = nil
-                try? FileManager.default.removeItem(atPath: path)
+                // The audio's kept until its conversation is over, to be heard again as a whole
+                // (secondPass); otherwise, and if there was nothing in it, it goes now.
+                if chunk.status != "done" || !Self.hearAgain {
+                    chunk.path = nil
+                    try? FileManager.default.removeItem(atPath: path)
+                }
             } catch {
                 Log.error("Couldn't transcribe the recording from \(chunk.start.formatted(date: .omitted, time: .standard)) (try \(chunk.attempts + 1) of 5)", error)
                 chunk.attempts += 1
@@ -123,6 +128,12 @@ actor Pipeline {
             predicate: #Predicate { $0.summary == nil }))) ?? []
         for c in waiting where c.closed || c.end < quietBefore {
             await summarise(c)
+        }
+        // Audio kept for a second hearing is never kept long, whatever happens.
+        let dayAgo = Date().addingTimeInterval(-86_400)
+        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.status == "done" && $0.path != nil && $0.end < dayAgo }))) ?? [] {
+            if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
+            chunk.path = nil
         }
         let cutoff = Date().addingTimeInterval(-Double(keepDays) * 86_400)
         try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.end < cutoff })
@@ -288,6 +299,103 @@ actor Pipeline {
         }
     }
 
+    // MARK: - Hearing it again
+
+    /// Whether finished conversations are heard again as a whole (needs the voice models).
+    static var hearAgain: Bool { VoiceEngine.enabled && VoiceEngine.downloaded }
+    /// Longer than this, a conversation's left as it was transcribed (memory and battery).
+    static let hearAgainLimit = 20.0 * 60
+
+    /// When a conversation's over, it's heard again as a whole: the voices told apart across all
+    /// of it at once (steadier than recording by recording, where a short snippet can be put
+    /// down to the wrong person), and the words transcribed with all the context around them.
+    /// It replaces the first transcript only if it's sound, then misheard words are fixed again.
+    /// The audio is deleted afterwards either way.
+    private func secondPass(_ c: Conversation) async {
+        let cid: UUID? = c.id
+        let chunks = (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == cid && $0.status == "done" },
+                                                                     sortBy: [SortDescriptor(\.start)]))) ?? []
+        defer {
+            for chunk in chunks {
+                if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
+                chunk.path = nil
+            }
+            try? modelContext.save()
+        }
+        let length = chunks.reduce(0.0) { $0 + $1.end.timeIntervalSince($1.start) }
+        guard Self.hearAgain, c.userEdited != true, chunks.count >= 2, length <= Self.hearAgainLimit,
+              chunks.allSatisfy({ $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? false }) else { return }
+        let started = Date()
+        let url = Recorder.audioDirectory.appendingPathComponent("whole_\(c.id.uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard let joined = Self.join(chunks.map { (url: URL(fileURLWithPath: $0.path!), recorded: $0.start) }, into: url) else { return }
+        async let heardVoices = withDeadline(60 + joined.length) { await VoiceEngine.shared.split(url) }
+        let words = await withDeadline(30 + 1.5 * joined.length) { () -> [SpeakerAlign.Word]? in
+            do { return try await SpeechEngine.shared.words(url) } catch {
+                Log.error("Couldn't transcribe the whole conversation again", error)
+                return nil
+            }
+        }
+        guard let words, !words.isEmpty, let split = await heardVoices else {
+            Log.info("Hearing the conversation again didn't finish, so it's kept as it was")
+            return
+        }
+        var heard: [Voiceprint] = []
+        let labels = VoiceMatcher.label(split.voices, heard: &heard, known: knownVoices())
+        let turns = split.turns.compactMap { t in labels[t.speaker].map { SpeakerAlign.Turn(start: t.start, end: t.end, speaker: $0) } }
+        let said = SpeakerAlign.assign(words, turns: turns, fallback: turns.first?.speaker ?? Labels.numbered(1))
+        let utterances = said.compactMap { s -> Utterance? in
+            let text = TranscriptFormat.clean(s.text)
+            return text.isEmpty ? nil : Utterance(start: joined.time(at: s.start), speaker: s.speaker, text: text)
+        }
+        let transcript = TranscriptFormat.lines(utterances)
+        guard JoinedAudio.accept(old: c.transcript, new: transcript) else {
+            Log.info("Heard the conversation again, but the result didn't look right, so it's kept as it was")
+            return
+        }
+        let before = Set(Labels.speakers(in: c.transcript)).count
+        c.transcript = transcript
+        c.voiceprints = heard
+        try? modelContext.save()
+        Log.info("Heard a \(Int(joined.length / 60)) min conversation again as a whole: \(Set(labels.values).count) voices (was \(before)), \(String(format: "%.0f", Date().timeIntervalSince(started))) s")
+        // Misheard words fixed again, a few lines at a time, starting with what it doubted.
+        guard Brain.notReadyReason == nil else { return }
+        let doubts = Doubts.of(words), protected = Doubts.protected(words)
+        let lines = transcript.split(separator: "\n").map(String.init)
+        for start in stride(from: 0, to: lines.count, by: 12) {
+            _ = await correctMisheard(lines[start..<min(start + 12, lines.count)].joined(separator: "\n"), in: c, doubts: doubts, protected: protected)
+        }
+    }
+
+    /// Recordings joined into one file, with half a second between each.
+    private static func join(_ pieces: [(url: URL, recorded: Date)], into url: URL) -> JoinedAudio? {
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16_000, AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
+        ]
+        var joined = JoinedAudio()
+        do {
+            let out = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            let gapFrames = AVAudioFrameCount(JoinedAudio.gap * out.processingFormat.sampleRate)
+            guard let gap = AVAudioPCMBuffer(pcmFormat: out.processingFormat, frameCapacity: gapFrames) else { return nil }
+            gap.frameLength = gapFrames
+            gap.floatChannelData![0].update(repeating: 0, count: Int(gapFrames)) // silence
+            for (i, piece) in pieces.enumerated() {
+                let file = try AVAudioFile(forReading: piece.url, commonFormat: .pcmFormatFloat32, interleaved: false)
+                guard file.processingFormat.sampleRate == out.processingFormat.sampleRate,
+                      let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else { return nil }
+                try file.read(into: buffer)
+                if i > 0 { try out.write(from: gap) }
+                try out.write(from: buffer)
+                joined.add(length: Double(buffer.frameLength) / file.processingFormat.sampleRate, recorded: piece.recorded)
+            }
+        } catch {
+            Log.error("Couldn't join a conversation's recordings", error)
+            return nil
+        }
+        return joined
+    }
+
     // MARK: - Fixing words
 
     /// You fixed a line: it's changed, and what you changed is learnt for next time.
@@ -301,6 +409,7 @@ actor Pipeline {
         let pairs = Fixes.pairs(from: old, to: new)
         Learned.add(pairs)
         c.fixes = Fixes.learn(pairs, into: c.fixes, limit: 100)
+        c.userEdited = true
         try? modelContext.save()
         Log.info("You fixed \(pairs.count) word(s) in a line")
         await refreshVocabulary()
@@ -514,6 +623,7 @@ actor Pipeline {
     }
 
     private func summarise(_ c: Conversation) async {
+        await secondPass(c)
         guard Brain.notReadyReason == nil else {
             c.closed = true
             try? modelContext.save()

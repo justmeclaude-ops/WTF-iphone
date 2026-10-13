@@ -86,13 +86,18 @@ final class Recorder: @unchecked Sendable {
     private static let base: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
     /// What it's recording through, for Diagnostics.
     private(set) var microphone = "iPhone"
+    /// Headphones found not to record in high quality: not tried again while they're in, or
+    /// switching to them and back would go round in circles.
+    private var callQualityOnly: String?
 
     /// The audio session, set up to record through the iPhone's microphones, or (if that's turned
     /// on) through AirPods that can record in high quality. Never through headphones in call
     /// quality: that would make everything else they play sound like a phone call too.
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
-        if Self.airPodsMic {
+        let headphones = session.currentRoute.outputs.first { [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType) }?.portName
+        if headphones == nil { callQualityOnly = nil }
+        if Self.airPodsMic, headphones == nil || headphones != callQualityOnly {
             var options = Self.base.union([.allowBluetoothHFP, .bluetoothHighQualityRecording])
             if #available(iOS 26.2, *) { options.insert(.farFieldInput) }
             do {
@@ -106,10 +111,13 @@ final class Recorder: @unchecked Sendable {
                         return
                     }
                     Log.info("\(port.portName) can't record in high quality, so the iPhone's microphone is used")
+                    callQualityOnly = port.portName
                 } else if port.portType != .bluetoothHFP {
                     // No AirPods in: the iPhone's microphone, ready to switch when they're put in.
                     microphone = "iPhone"
                     return
+                } else {
+                    callQualityOnly = port.portName
                 }
             } catch {
                 Log.error("Couldn't record through the AirPods", error)

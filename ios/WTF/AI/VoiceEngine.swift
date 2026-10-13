@@ -32,9 +32,23 @@ actor VoiceEngine {
         var voices: [LocalVoice]
     }
 
+    /// One recording at a time: the voice models aren't made to be used by two at once (a
+    /// recording just made and a whole conversation heard again can both want them).
+    private var queue: Task<Void, Never>?
+
     /// The voices in a recording and when each spoke, or nil if voices are off, not downloaded
     /// yet, or the recording's too short to tell.
     func split(_ url: URL) async -> Split? {
+        let before = queue
+        let job = Task { () -> Split? in
+            await before?.value
+            return await self.splitNow(url)
+        }
+        queue = Task { _ = await job.value }
+        return await job.value
+    }
+
+    private func splitNow(_ url: URL) async -> Split? {
         guard Self.enabled, Self.downloaded else { return nil }
         do {
             try await prepare()
