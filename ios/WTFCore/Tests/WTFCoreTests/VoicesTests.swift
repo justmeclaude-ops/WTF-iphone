@@ -217,6 +217,16 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(threads.count, 1, "\(threads.map(\.title))")
     }
 
+    func testTopicDetailsAndTangentLayout() {
+        let t0 = Date(timeIntervalSince1970: 0)
+        var threads = Threads.apply(TopicChange(topics: ["Mum's birthday", "The MOT"], dropped: [true], facts: ["2 Nov", "Thursday 9am"]),
+                                    to: [], from: t0, to: t0.addingTimeInterval(20))
+        threads = Threads.apply(TopicChange(topics: ["The MOT", "Mum's birthday"], facts: ["the garage", "Crown, Sat 1st 7pm"]),
+                                to: threads, from: t0.addingTimeInterval(20), to: t0.addingTimeInterval(40))
+        XCTAssertEqual(threads.map(\.facts), ["2 Nov", "Thursday 9am · the garage", "Crown, Sat 1st 7pm"])
+        XCTAssertEqual(Threads.layout(threads).map(\.tangent), [false, true, false])
+    }
+
     func testVocabulary() {
         let w = Vocabulary.words(people: ["Sarah", "You", "sarah"], items: ["Ring Dave about the van", "Buy milk at Asda"], limit: 6)
         XCTAssertEqual(w, ["Sarah", "Dave", "Asda", "Tesco", "Sainsbury's", "Aldi"])

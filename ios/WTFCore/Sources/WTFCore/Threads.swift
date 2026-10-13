@@ -22,6 +22,8 @@ public struct TopicThread: Codable, Equatable, Sendable, Identifiable {
     public var status: Status
     /// When left hanging: what you were in the middle of saying.
     public var leftAt: String?
+    /// The key details said about it: "2 Nov · Crown, Sat 1st, 7pm".
+    public var facts: String?
 
     public init(id: UUID = UUID(), title: String, start: Date, end: Date, status: Status = .current, leftAt: String? = nil) {
         self.id = id; self.title = title; self.start = start; self.end = end; self.status = status; self.leftAt = leftAt
@@ -37,8 +39,10 @@ public struct TopicChange: Sendable {
     public var leftAt: String
     /// Which topic [leftAt] is about (else the last dropped one).
     public var leftAtTopic: String
-    public init(topics: [String], dropped: [Bool] = [], leftAt: String = "", leftAtTopic: String = "") {
-        self.topics = topics; self.dropped = dropped; self.leftAt = leftAt; self.leftAtTopic = leftAtTopic
+    /// For each topic, in order: the key details said about it (dates, times, places), or empty.
+    public var facts: [String]
+    public init(topics: [String], dropped: [Bool] = [], leftAt: String = "", leftAtTopic: String = "", facts: [String] = []) {
+        self.topics = topics; self.dropped = dropped; self.leftAt = leftAt; self.leftAtTopic = leftAtTopic; self.facts = facts
     }
 }
 
@@ -52,8 +56,11 @@ public enum Threads {
     /// stretch share its time evenly (the recording doesn't say exactly where each began).
     public static func apply(_ change: TopicChange, to threads: [TopicThread], from: Date, to: Date) -> [TopicThread] {
         var titles: [String] = []
-        for t in change.topics.prefix(4).compactMap(clean) where !notTopics.test(t.lowercased()) && (titles.last.map({ !same($0, t) }) ?? true) {
-            titles.append(t)
+        var factsFor: [String: String] = [:]
+        for (i, raw) in change.topics.prefix(4).enumerated() {
+            guard let t = clean(raw), !notTopics.test(t.lowercased()) else { continue }
+            if let f = change.facts.indices.contains(i) ? cleanFacts(change.facts[i]) : nil { factsFor[t.lowercased()] = f }
+            if titles.last.map({ !same($0, t) }) ?? true { titles.append(t) }
         }
         var out = threads
         let currentIndex = out.indices.last.flatMap { out[$0].status == .current ? $0 : nil }
@@ -72,6 +79,7 @@ public enum Threads {
             if let i = out.indices.last, out[i].status == .current {
                 if same(out[i].title, title) {
                     out[i].end = max(out[i].end, segTo)
+                    out[i].facts = merge(out[i].facts, factsFor[title.lowercased()])
                     continue
                 }
                 // Moving on: how did the one before end? (For one carried over from earlier, we can't tell: finished.)
@@ -86,7 +94,38 @@ public enum Threads {
                 name = out[j].title
                 if out[j].status == .hanging { out[j].status = .resumed }
             }
-            out.append(TopicThread(title: name, start: segFrom, end: segTo))
+            var thread = TopicThread(title: name, start: segFrom, end: segTo)
+            thread.facts = factsFor[title.lowercased()]
+            out.append(thread)
+        }
+        return out
+    }
+
+    /// "2 Nov, Crown 7pm" from whatever the model wrote; nil for nothing ("none", "n/a").
+    static func cleanFacts(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: CharacterSet(charactersIn: " \n\"'.-"))
+        guard t.count >= 2, !["none", "n/a", "nothing", "no details", "empty"].contains(t.lowercased()) else { return nil }
+        return String(t.prefix(60))
+    }
+
+    /// More details for a topic that carries on, without repeating what's there.
+    static func merge(_ old: String?, _ new: String?) -> String? {
+        guard let new else { return old }
+        guard let old, !old.isEmpty else { return new }
+        if old.lowercased().contains(new.lowercased()) { return old }
+        return String((old + " · " + new).prefix(80))
+    }
+
+    /// How the trail is drawn: a topic that follows one left hanging is a tangent (stepped in),
+    /// until the conversation goes back to something from before.
+    public static func layout(_ threads: [TopicThread]) -> [(thread: TopicThread, tangent: Bool)] {
+        var out: [(thread: TopicThread, tangent: Bool)] = []
+        var inTangent = false
+        for (i, t) in threads.enumerated() {
+            let returns = threads[..<i].contains { same($0.title, t.title) }
+            if returns { inTangent = false }
+            out.append((t, inTangent && !returns))
+            if t.status == .hanging || t.status == .resumed { inTangent = true } // dropped, whether or not picked up later
         }
         return out
     }
@@ -143,7 +182,8 @@ public enum Threads {
             List the subjects these lines move through, in order: usually one or two, at most three. Name each \
             subject in 2 to 4 words (e.g. "Mum's birthday", "The MOT", "Shopping", "Prison news"), not with words \
             someone said ("Perfect", "Quick tangent"). If a subject from the list above comes back, use its name \
-            exactly. A quick tangent counts as a subject. For each subject except the last, say whether it was \
+            exactly. A quick tangent counts as a subject. For each subject, also give the key details said about it \
+            (dates, times, places, names) in under 8 words, e.g. "2 Nov, the Crown, Sat 7pm", or leave it empty. For each subject except the last, say whether it was \
             dropped part-way, unfinished, or came to an end. If one was dropped, say what I was in the middle of \
             saying about it, starting with "you were".
             """

@@ -47,6 +47,9 @@ struct AskView: View {
                             Bubble(message: m, tail: next?.fromUser != m.fromUser)
                                 .padding(.top, i > 0 && model.messages[i - 1].fromUser != m.fromUser ? 8 : 0)
                         }
+                        if let last = model.messages.last, !last.fromUser, !last.isError, model.status == nil {
+                            FollowUps(conversation: latest.first?.id).padding(.top, 6)
+                        }
                         if let s = model.streaming, !s.isEmpty {
                             Bubble(message: ChatMessage(fromUser: false, text: s), tail: true).padding(.top, 8)
                         } else if let status = model.status {
@@ -196,5 +199,33 @@ struct TypingBubble: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 14).padding(.vertical, 11)
             .background(Color(.systemGray5), in: BubbleShape(fromUser: false, tail: true))
+    }
+}
+
+/// After an answer, the obvious next steps, one tap each.
+struct FollowUps: View {
+    @Environment(AppModel.self) private var model
+    let conversation: UUID?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button("Summarise This", systemImage: "text.alignleft") {
+                    model.ask("Summarise this conversation", focus: conversation)
+                }
+                Button("Add to Calendar", systemImage: "calendar") { model.tab = 2 }
+                Button("Make a To-do List", systemImage: "checklist") {
+                    model.ask("What did I say I'd do?", focus: conversation)
+                }
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
+            .tint(.primary)
+            .font(.subheadline)
+        }
+        .onScrollPhaseChange { _, phase in
+            if phase != .idle { TabSwipe.sidewaysScrollUntil = Date().addingTimeInterval(0.6) }
+        }
     }
 }

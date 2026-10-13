@@ -4,69 +4,40 @@ import SwiftData
 import SwiftUI
 import UIKit
 
-/// Heard Today (suggestions waiting for a yes) and one To Do list: appointments first, soonest
-/// at the top, then everything else, shopping included.
+/// Three lists, the way you'd keep them: Calendar, To-dos and Shopping. What WTF heard sits at
+/// the top of each, waiting for a yes ("Add") or a "Not Now"; below it, what's on the list.
 struct ListsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \ActionItem.created, order: .reverse) private var items: [ActionItem]
-    @State private var draft = ""
+    @State private var drafts: [String: String] = [:]
     @State private var ticking: Set<UUID> = []
     @State private var calendarItem: ActionItem?
 
-    private var suggested: [ActionItem] { items.filter { $0.status == "suggested" } }
-    private var todo: [ActionItem] {
-        items.filter { $0.status == "accepted" }.sorted { a, b in
-            if (a.type == "EVENT") != (b.type == "EVENT") { return a.type == "EVENT" }
-            return (a.start ?? .distantFuture, b.created) < (b.start ?? .distantFuture, a.created)
+    private struct ListGroup: Identifiable {
+        var id: String, title: String, icon: String, empty: String, canAdd: Bool
+    }
+
+    private let groups = [
+        ListGroup(id: "EVENT", title: "Calendar", icon: "calendar", empty: "Appointments and plans you mention appear here.", canAdd: false),
+        ListGroup(id: "TODO", title: "To-dos", icon: "checklist", empty: "Things you say you'll do appear here.", canAdd: true),
+        ListGroup(id: "BUY", title: "Shopping", icon: "cart", empty: "Things you need to buy appear here.", canAdd: true),
+    ]
+
+    private func suggested(_ type: String) -> [ActionItem] { items.filter { $0.status == "suggested" && $0.type == type } }
+    private func listed(_ type: String) -> [ActionItem] {
+        items.filter { $0.status == "accepted" && $0.type == type }.sorted { a, b in
+            (a.start ?? .distantFuture, b.created) < (b.start ?? .distantFuture, a.created)
         }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                if !suggested.isEmpty {
-                    Section {
-                        ForEach(suggested) { s in
-                            SuggestionRow(item: s, onAccept: { accept(s) }, onDismiss: { s.status = "dismissed"; save() })
-                        }
-                    } header: {
-                        Text("Heard Today")
-                    } footer: {
-                        Text("Things WTF picked up in your conversations. Nothing is added until you say so.")
-                    }
-                }
-                Section {
-                    ForEach(todo) { item in
-                        CheckRow(item: item, ticking: ticking.contains(item.id)) { tick(item) }
-                            .contextMenu {
-                                Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = item.title }
-                                if item.type == "EVENT" {
-                                    Button("Add to Calendar", systemImage: "calendar.badge.plus") { calendarItem = item }
-                                }
-                                Button("Delete", systemImage: "trash", role: .destructive) { context.delete(item); save() }
-                            }
-                    }
-                    .onDelete { offsets in
-                        for i in offsets { context.delete(todo[i]) }
-                        save()
-                    }
-                    HStack(spacing: 14) {
-                        Image(systemName: "circle").font(.title2).foregroundStyle(.tertiary)
-                        TextField("Add to-do", text: $draft).onSubmit(add)
-                    }
-                } header: {
-                    HStack {
-                        Text("To Do").font(.title2.bold()).foregroundStyle(.primary).textCase(nil)
-                        Spacer()
-                        if !todo.isEmpty {
-                            ShareLink(item: "To do:\n" + todo.map { "\u{2022} \($0.title)" + (detail($0).map { " (\($0))" } ?? "") }.joined(separator: "\n")) {
-                                Image(systemName: "square.and.arrow.up")
-                            }
-                        }
-                    }
-                } footer: {
-                    if todo.isEmpty { Text("Empty. WTF adds things here when you accept its suggestions.") }
-                }
+                Text("Heard today and kept for later. Nothing goes on a list until you say so.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 4, trailing: 20))
+                ForEach(groups) { group in section(group) }
             }
             .animation(.snappy, value: items.map(\.status))
             .navigationTitle("Lists")
@@ -77,6 +48,52 @@ struct ListsView: View {
                     calendarItem = nil
                 }
                 .ignoresSafeArea()
+            }
+        }
+    }
+
+    @ViewBuilder private func section(_ group: ListGroup) -> some View {
+        let waiting = suggested(group.id)
+        let kept = listed(group.id)
+        Section {
+            ForEach(waiting) { s in
+                SuggestionRow(item: s, onAccept: { accept(s) }, onDismiss: { s.status = "dismissed"; save() })
+            }
+            ForEach(kept) { item in
+                CheckRow(item: item, ticking: ticking.contains(item.id)) { tick(item) }
+                    .contextMenu {
+                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = item.title }
+                        if item.type == "EVENT" {
+                            Button("Add to Calendar", systemImage: "calendar.badge.plus") { calendarItem = item }
+                        }
+                        Button("Delete", systemImage: "trash", role: .destructive) { context.delete(item); save() }
+                    }
+            }
+            .onDelete { offsets in
+                for i in offsets { context.delete(kept[i]) }
+                save()
+            }
+            if group.canAdd {
+                HStack(spacing: 14) {
+                    Image(systemName: "plus.circle").font(.title2).foregroundStyle(.tertiary)
+                    TextField(group.id == "BUY" ? "Add to shopping" : "Add to-do", text: Binding(
+                        get: { drafts[group.id] ?? "" }, set: { drafts[group.id] = $0 }))
+                        .onSubmit { add(group.id) }
+                }
+            } else if waiting.isEmpty && kept.isEmpty {
+                Text(group.empty).font(.subheadline).foregroundStyle(.secondary)
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Image(systemName: group.icon).font(.headline).foregroundStyle(.secondary)
+                Text(group.title).font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+                Spacer()
+                if !kept.isEmpty {
+                    ShareLink(item: group.title + ":\n" + kept.map { "\u{2022} \($0.title)" + (detail($0).map { " (\($0))" } ?? "") }.joined(separator: "\n")) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -98,11 +115,11 @@ struct ListsView: View {
         }
     }
 
-    private func add() {
-        let t = draft.trimmingCharacters(in: .whitespaces)
+    private func add(_ type: String) {
+        let t = (drafts[type] ?? "").trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
-        context.insert(ActionItem(type: "TODO", title: t, status: "accepted"))
-        draft = ""
+        context.insert(ActionItem(type: type, title: t, status: "accepted"))
+        drafts[type] = ""
         save()
     }
 
@@ -127,12 +144,12 @@ struct SuggestionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon).font(.body).foregroundStyle(.secondary)
+            Image(systemName: "sparkle").font(.footnote).foregroundStyle(.tertiary)
                 .frame(width: 29, height: 29)
+                .accessibilityLabel("Heard")
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title).font(.headline)
                 if let d = detail(item) { Text(d).font(.subheadline).foregroundStyle(.secondary) }
-                if item.type != "EVENT" { Text("Add to your to-dos?").font(.subheadline).foregroundStyle(.secondary) }
                 if let quote = item.quote { Text("\u{201C}\(quote)\u{201D}").font(.footnote).foregroundStyle(.tertiary).lineLimit(2) }
                 HStack {
                     Button(item.type == "EVENT" ? "Add to Calendar" : "Add", action: onAccept).buttonStyle(.bordered)
@@ -145,7 +162,6 @@ struct SuggestionRow: View {
         .padding(.vertical, 4)
     }
 
-    private var icon: String { item.type == "EVENT" ? "calendar" : item.type == "BUY" ? "cart" : "checklist" }
 }
 
 /// A Reminders row: the ring fills with a dot when ticked.

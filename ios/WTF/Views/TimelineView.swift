@@ -20,7 +20,7 @@ struct TimelineView: View {
     private var byDay: [(String, [Conversation])] {
         var out: [(String, [Conversation])] = []
         for c in shown {
-            let day = dayLabel(c.start)
+            let day = dayHeader(c.start)
             if out.last?.0 == day { out[out.count - 1].1.append(c) } else { out.append((day, [c])) }
         }
         return out
@@ -34,9 +34,13 @@ struct TimelineView: View {
                     Section { TranscribingRow(pending: pending.count) }
                 }
                 ForEach(byDay, id: \.0) { day, list in
-                    Section(day) {
+                    Section {
                         ForEach(list) { c in
-                            NavigationLink(value: c) { ConversationRow(conversation: c) }
+                            TimelineEntry(conversation: c)
+                                .background { NavigationLink(value: c) { EmptyView() }.opacity(0) }
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 16))
                                 .contextMenu {
                                     Button("Ask About This", systemImage: "questionmark.bubble") {
                                         model.tab = 0
@@ -53,9 +57,12 @@ struct TimelineView: View {
                                     }
                                 }
                         }
+                    } header: {
+                        Text(day).font(.subheadline).foregroundStyle(.secondary).textCase(nil)
                     }
                 }
             }
+            .listStyle(.plain)
             .overlay {
                 if conversations.isEmpty && pending.isEmpty {
                     ContentUnavailableView("No Conversations", systemImage: "waveform",
@@ -94,6 +101,102 @@ struct TranscribingRow: View {
                     .sensoryFeedback(.selection, trigger: model.transcribing != nil)
             }
         }
+    }
+}
+
+/// The day as a timeline: a line down the side, each conversation pinned to it at its time,
+/// and under it the topics it wandered through; a tangent (after one was left hanging) steps in.
+struct TimelineEntry: View {
+    @Environment(AppModel.self) private var model
+    let conversation: Conversation
+
+    private var live: Bool { !conversation.closed && conversation.summary == nil }
+
+    var body: some View {
+        let topics = Threads.layout(conversation.threads)
+        HStack(alignment: .top, spacing: 0) {
+            Text(conversation.start, format: .dateTime.hour().minute())
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .frame(width: 58, alignment: .trailing)
+                .padding(.top, 14).padding(.trailing, 8)
+            // The line, and this conversation's place on it.
+            VStack(spacing: 0) {
+                Rectangle().fill(.quaternary).frame(width: 1.5, height: 16)
+                Circle().fill(live ? Color.primary : Color.secondary).frame(width: 9, height: 9)
+                Rectangle().fill(.quaternary).frame(width: 1.5).frame(maxHeight: .infinity)
+            }
+            .frame(width: 12)
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(displayTitle(conversation)).font(.headline).lineLimit(2)
+                        Spacer(minLength: 4)
+                        if live { Text("Live").font(.caption.weight(.medium)).foregroundStyle(.secondary) }
+                    }
+                    if !preview.isEmpty {
+                        Text(preview).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 14))
+                if !topics.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(topics.prefix(6).enumerated()), id: \.offset) { _, item in
+                            TopicNode(thread: item.thread, tangent: item.tangent)
+                        }
+                        if topics.count > 6 {
+                            Text("+ \(topics.count - 6) more").font(.caption).foregroundStyle(.tertiary).padding(.leading, 14)
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
+            }
+            .padding(.leading, 10).padding(.vertical, 8)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var preview: String {
+        if let first = conversation.summary?.split(separator: "\n").first {
+            return String(first).trimmingCharacters(in: CharacterSet(charactersIn: "\u{2022}- "))
+        }
+        return conversation.transcript.split(separator: "\n").last.map { line in
+            String(line).components(separatedBy: ": ").dropFirst().joined(separator: ": ")
+        } ?? ""
+    }
+}
+
+/// One topic on the timeline: a small dot, its name and what was settled; dropped part-way, a
+/// hollow dot; a tangent, stepped in under a turn arrow.
+struct TopicNode: View {
+    let thread: TopicThread
+    let tangent: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            if tangent {
+                Image(systemName: "arrow.turn.down.right").font(.caption2).foregroundStyle(.tertiary)
+            }
+            Group {
+                if thread.status == .hanging {
+                    Circle().strokeBorder(Color.secondary, lineWidth: 1)
+                } else {
+                    Circle().fill(thread.status == .current ? Color.primary : Color.secondary)
+                }
+            }
+            .frame(width: 6, height: 6)
+            .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(thread.title).font(.subheadline).foregroundStyle(thread.status == .current ? .primary : .secondary)
+                if let facts = thread.facts, !facts.isEmpty {
+                    Text(facts).font(.caption).foregroundStyle(.secondary)
+                } else if thread.status == .hanging {
+                    Text("Left hanging").font(.caption).italic().foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .padding(.leading, tangent ? 10 : 0)
     }
 }
 
@@ -247,6 +350,13 @@ func displayTitle(_ c: Conversation) -> String {
     if let title = c.title { return title }
     if !c.closed { return "Listening\u{2026}" }
     return Brain.notReadyReason == nil ? "Summarising\u{2026}" : "Conversation"
+}
+
+/// "Today · 13 Oct", "Yesterday · 12 Oct", "Saturday · 10 Oct".
+func dayHeader(_ d: Date) -> String {
+    let cal = Calendar.current
+    let name = cal.isDateInToday(d) ? "Today" : cal.isDateInYesterday(d) ? "Yesterday" : d.formatted(.dateTime.weekday(.wide))
+    return "\(name) \u{00B7} \(d.formatted(.dateTime.day().month(.abbreviated)))"
 }
 
 func dayLabel(_ d: Date) -> String {

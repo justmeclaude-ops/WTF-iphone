@@ -69,6 +69,9 @@ struct ThreadList: View {
                     Image(systemName: icon(t)).foregroundStyle(t.status == .current || t.status == .hanging ? Color.primary : Color.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(t.title).foregroundStyle(.primary)
+                        if let facts = t.facts, !facts.isEmpty {
+                            Text(facts).font(.footnote).foregroundStyle(.secondary)
+                        }
                         if t.status == .hanging, let left = t.leftAt, !left.isEmpty {
                             Text(left.prefix(1).uppercased() + left.dropFirst()).font(.footnote).italic().foregroundStyle(.secondary)
                         }
