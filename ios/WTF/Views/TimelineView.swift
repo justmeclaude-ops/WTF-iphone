@@ -241,9 +241,6 @@ struct ConversationView: View {
 enum VoiceColor {
     static func of(_ label: String) -> Color { label == Labels.me ? .primary : .secondary }
 }
-        return palette[n % palette.count]
-    }
-}
 
 /// Its title, or what's happening until it has one.
 func displayTitle(_ c: Conversation) -> String {

@@ -41,7 +41,12 @@ jobs:
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD" || true
-          test -d build/Build/Products/Release-iphoneos/WTF.app || { grep -B2 -A6 "error:" build.log | head -200; exit 1; }
+          # A failed build can still leave a half-built app behind: only a clean success counts.
+          grep -q "\*\* BUILD SUCCEEDED \*\*" build.log && test -d build/Build/Products/Release-iphoneos/WTF.app \
+            || { grep -B2 -A6 "error:" build.log | head -200; exit 1; }
+          # And it must have its parts: the app itself and the Lock Screen widget.
+          test -f build/Build/Products/Release-iphoneos/WTF.app/WTF
+          test -d build/Build/Products/Release-iphoneos/WTF.app/PlugIns/WTFWidgets.appex
 
       - name: Package the IPA
         id: ipa
