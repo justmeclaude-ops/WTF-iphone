@@ -17,7 +17,8 @@ actor Pipeline {
     private var transcribing: Task<Bool, Never>?
     private var thinking: Task<Void, Never>?
     /// New lines whose topic hasn't been worked out yet (it waits until after any question's answered).
-    private var toFollow: [(id: UUID, text: String, from: Date, to: Date)] = []
+    /// Each with the words the recogniser doubted and the ones it was sure of, for fixing misheard words.
+    private var toFollow: [(id: UUID, text: String, from: Date, to: Date, doubts: [Doubt], protected: Set<String>)] = []
 
     func addChunk(url: URL, start: Date, end: Date) {
         modelContext.insert(Chunk(start: start, end: end, path: url.path))
@@ -50,6 +51,16 @@ actor Pipeline {
                 let url = URL(fileURLWithPath: path)
                 let length = max(1, chunk.end.timeIntervalSince(chunk.start))
                 let started = Date()
+                // A song on the radio or the TV isn't conversation: not transcribed, so no lyrics.
+                if length >= 6, await withDeadline(5 + length / 4, { await MusicCheck.isSong(url) }) == true {
+                    Log.info("Recording \(chunk.start.formatted(date: .omitted, time: .standard)) (\(Int(length)) s) was music, so it wasn't transcribed")
+                    _ = await withDeadline(4) { await LiveTranscriber.shared.words(from: chunk.start, to: chunk.end) }
+                    chunk.status = "music"
+                    chunk.path = nil
+                    try? FileManager.default.removeItem(atPath: path)
+                    try? modelContext.save()
+                    continue
+                }
                 async let heardVoices = withDeadline(60 + length) { await VoiceEngine.shared.split(url) }
                 // Usually the words were heard live already; if not, from the file.
                 var words = await withDeadline(4) { await LiveTranscriber.shared.words(from: chunk.start, to: chunk.end) }
@@ -64,7 +75,7 @@ actor Pipeline {
                 }
                 guard let words else { throw StepTimedOut(what: "transcribing \(Int(length)) s of audio") }
                 let split = await heardVoices
-                Log.info("Recording \(chunk.start.formatted(date: .omitted, time: .standard)) (\(Int(length)) s): \(words.count) words \(live ? "live" : "from the file"), \(split?.voices.count ?? 0) voices, \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
+                Log.info("Recording \(chunk.start.formatted(date: .omitted, time: .standard)) (\(Int(length)) s): \(words.count) words \(live ? "live" : "from the file") (\(Doubts.summary(words))), \(split?.voices.count ?? 0) voices, \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
                 let target = openConversation(for: chunk)
                 var voices = target?.voiceprints ?? []
                 let utterances = whoSaidWhat(words, split: split, voices: &voices, before: target?.transcript, start: chunk.start)
@@ -78,7 +89,7 @@ actor Pipeline {
                     chunk.conversationID = c.id
                     try? modelContext.save()
                     await suggest(for: c, found: ruleActions(c))
-                    toFollow.append((c.id, text, chunk.start, chunk.end))
+                    toFollow.append((c.id, text, chunk.start, chunk.end, Doubts.of(words), Doubts.protected(words)))
                 }
                 chunk.path = nil
                 try? FileManager.default.removeItem(atPath: path)
@@ -175,30 +186,125 @@ actor Pipeline {
         return kept.joined(separator: "\n")
     }
 
-    /// What the AI needs for any other question: the day's notes and the best-matching transcript.
-    func notes(for question: String, focus: UUID?) -> (notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?) {
+    /// What the AI needs for any other question: the day's notes, the conversation that best
+    /// matches it (by meaning as well as words), the parts of it that matter most, and what's
+    /// known that bears on it.
+    func notes(for question: String, focus: UUID?) -> (notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, background: String) {
         let all = (try? modelContext.fetch(FetchDescriptor<Conversation>(sortBy: [SortDescriptor(\.start, order: .reverse)]))) ?? []
         let pool = focus.map { id in all.filter { $0.id == id } } ?? Array(all.prefix(40))
         let keys = Prompts.keywords(question)
-        let best = pool.max { a, b in score(a, keys) < score(b, keys) }
+        let asked = Meaning.vector(question)
+        func rank(_ c: Conversation) -> Double {
+            var meaning = 0.0
+            if let asked, let v = Meaning.vector([c.title, c.summary, c.memory.text()].compactMap { $0 }.joined(separator: ". ")) {
+                meaning = Meaning.similarity(asked, v)
+            }
+            return meaning * 10 + min(score(c, keys), 15)
+        }
+        let best = pool.max { rank($0) < rank($1) }
         let notes = pool.prefix(12).map { (label: label($0), title: $0.title, summary: $0.summary) }
-        return (notes: notes, best: best.map { (label: label($0), transcript: $0.transcript) })
+        guard let best else { return (notes, nil, "") }
+        // A long conversation: the lines that bear on the question (and the ones either side), not just its end.
+        var transcript = best.transcript
+        if Prompts.tokens(TranscriptFormat.compact(transcript)) > 1_300 {
+            let lines = transcript.split(separator: "\n").map(String.init)
+            let scores = lines.map { line -> Double in
+                let text = Corrections.text(of: line)
+                let meaning = asked.flatMap { a in Meaning.vector(text).map { Meaning.similarity(a, $0) } } ?? 0
+                return meaning + Retrieval.wordScore(question, text)
+            }
+            let excerpt = Retrieval.excerpt(lines, scores: scores, budget: 1_200)
+            if !excerpt.isEmpty { transcript = excerpt + "\n" + Prompts.tail(transcript, budget: 150) }
+        }
+        let background = Prompts.background(memory: best.memory, facts: relevantFacts(to: question, limit: 5))
+        return (notes, (label(best), transcript), background)
     }
 
     func deleteConversation(_ id: UUID) {
         let optional: UUID? = id
+        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == optional }))) ?? [] {
+            if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
+        }
         try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.id == id })
         try? modelContext.delete(model: Chunk.self, where: #Predicate { $0.conversationID == optional })
         try? modelContext.save()
     }
 
     func deleteEverything() {
+        try? modelContext.delete(model: Fact.self)
+        Learned.forget()
         try? modelContext.delete(model: Conversation.self)
         try? modelContext.delete(model: Chunk.self)
         try? modelContext.delete(model: ActionItem.self)
         try? modelContext.delete(model: Person.self)
         try? modelContext.save()
         try? FileManager.default.removeItem(at: Recorder.audioDirectory)
+    }
+
+    // MARK: - Memory
+
+    /// Lines not yet in their conversation's notes.
+    private var unremembered: [UUID: String] = [:]
+
+    /// Brings a conversation's notes up to date once enough new talk has built up (or [force]:
+    /// it's over), so recaps, lists and answers see the whole of it.
+    private func remember(_ c: Conversation, force: Bool = false) async {
+        guard Brain.notReadyReason == nil, let new = unremembered[c.id], !new.isEmpty else { return }
+        guard force || new.split(whereSeparator: \.isWhitespace).count >= 40 else { return }
+        unremembered[c.id] = nil
+        let prompt = Prompts.memory(c.memory, new: new)
+        guard let notes = await withDeadline(40, { await Log.attempt("Conversation notes", { try await Brain.remember(prompt) }) }) else { return }
+        c.memory = notes
+        try? modelContext.save()
+    }
+
+    /// Facts known from other days that bear on [text].
+    private func relevantFacts(to text: String, limit: Int = 5) -> [String] {
+        let facts = ((try? modelContext.fetch(FetchDescriptor<Fact>(sortBy: [SortDescriptor(\.created, order: .reverse)]))) ?? []).map(\.text)
+        return KnownFacts.relevant(facts, to: text, limit: limit)
+    }
+
+    /// For the top of a prompt about the latest conversation: its notes and the facts that bear on it.
+    func latestBackground() -> String {
+        var d = FetchDescriptor<Conversation>(sortBy: [SortDescriptor(\.end, order: .reverse)])
+        d.fetchLimit = 1
+        guard let c = (try? modelContext.fetch(d))?.first else { return "" }
+        let memory = c.memory
+        let about = memory.text() + " " + (c.title ?? "") + " " + Prompts.tail(c.transcript, budget: 300)
+        return Prompts.background(memory: memory, facts: relevantFacts(to: about, limit: 4))
+    }
+
+    /// Picks out facts worth keeping after today, once a conversation's over.
+    private func learnFacts(from c: Conversation) async {
+        guard Brain.notReadyReason == nil, c.transcript.split(whereSeparator: \.isWhitespace).count >= 30 else { return }
+        let known = ((try? modelContext.fetch(FetchDescriptor<Fact>())) ?? []).map(\.text)
+        let prompt = Prompts.lastingFacts(transcript: c.transcript, known: KnownFacts.relevant(known, to: c.transcript, limit: 15))
+        guard let found = await withDeadline(40, { await Log.attempt("Lasting facts", { try await Brain.lastingFacts(prompt) }) }) else { return }
+        let fresh = KnownFacts.fresh(found, known: known).prefix(5)
+        for f in fresh { modelContext.insert(Fact(text: f, conversationID: c.id)) }
+        if !fresh.isEmpty {
+            try? modelContext.save()
+            Log.info("Learnt \(fresh.count) lasting fact(s)")
+        }
+    }
+
+    // MARK: - Fixing words
+
+    /// You fixed a line: it's changed, and what you changed is learnt for next time.
+    func fixLine(in id: UUID, original: String, text typed: String) async {
+        let new = typed.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        guard !new.isEmpty, let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first,
+              let range = c.transcript.range(of: original) else { return }
+        let old = Corrections.text(of: original)
+        guard old != new else { return }
+        c.transcript.replaceSubrange(range, with: Corrections.prefix(of: original) + new)
+        let pairs = Fixes.pairs(from: old, to: new)
+        Learned.add(pairs)
+        c.fixes = Fixes.learn(pairs, into: c.fixes, limit: 100)
+        try? modelContext.save()
+        Log.info("You fixed \(pairs.count) word(s) in a line")
+        await refreshVocabulary()
+        await suggest(for: c, found: ruleActions(c))
     }
 
     // MARK: - Naming voices
@@ -340,7 +446,9 @@ actor Pipeline {
             let next = toFollow.removeFirst()
             let id = next.id
             guard let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first else { continue }
-            let text = await correctMisheard(next.text, in: c)
+            let text = await correctMisheard(next.text, in: c, doubts: next.doubts, protected: next.protected)
+            unremembered[c.id] = [unremembered[c.id], text].compactMap { $0 }.joined(separator: "\n")
+            await remember(c)
             let before = c.transcript.hasSuffix(text) ? String(c.transcript.dropLast(text.count)) : ""
             let prompt = Threads.prompt(c.threads, recent: before, new: text)
             guard let change = await withDeadline(40, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }) else { continue }
@@ -351,17 +459,25 @@ actor Pipeline {
     }
 
     /// "Bucked the back room" → "booked": the AI fixes words the recogniser misheard, from
-    /// context; a fix is only kept if it changes a few words and leaves the rest as said.
-    private func correctMisheard(_ text: String, in c: Conversation) async -> String {
+    /// context, starting with the ones it doubted, and knowing the names and words you use and
+    /// the mistakes you've corrected before. A fix is only kept if it changes a few words, leaves
+    /// the rest as said, and doesn't touch a word the recogniser was sure of.
+    private func correctMisheard(_ text: String, in c: Conversation, doubts: [Doubt], protected: Set<String>) async -> String {
         let lines = text.split(separator: "\n").map(String.init)
+        let known = await SpeechEngine.shared.expectedWords()
+        let learned = Learned.fixes
         guard !lines.isEmpty, c.transcript.contains(text),
-              let proposed = await withDeadline(30, { await Log.attempt("Correcting misheard words", { try await Brain.correct(lines) }) })
+              let proposed = await withDeadline(30, { await Log.attempt("Correcting misheard words", {
+                  try await Brain.correct(lines, doubts: doubts, known: known, learned: learned)
+              }) })
         else { return text }
-        let fixed = Corrections.apply(proposed, to: lines).joined(separator: "\n")
+        let fixedLines = Corrections.apply(proposed, to: lines, protected: protected)
+        let fixed = fixedLines.joined(separator: "\n")
         guard fixed != text else { return text }
         c.transcript = c.transcript.replacingOccurrences(of: text, with: fixed)
+        c.fixes = Fixes.learn(Corrections.changes(from: lines, to: fixedLines), into: c.fixes, limit: 100)
         try? modelContext.save()
-        Log.info("Corrected misheard words in \(zip(lines, fixed.split(separator: "\n")).filter { $0.0 != String($0.1) }.count) line(s)")
+        Log.info("Corrected misheard words in \(zip(lines, fixedLines).filter { $0.0 != $0.1 }.count) line(s)")
         await suggest(for: c, found: ruleActions(c))
         return fixed
     }
@@ -372,11 +488,19 @@ actor Pipeline {
         await MainActor.run { ListeningActivity.shared.show(threads) }
     }
 
-    /// Tells the recogniser the names and words it should expect.
+    /// Tells the recogniser the names and words it should expect: people you've named, words
+    /// you've corrected, names in what WTF knows, your contacts and calendar (if you've said so),
+    /// your list and the shops. Also applied to the live recogniser as it runs.
     private func refreshVocabulary() async {
         let people = ((try? modelContext.fetch(FetchDescriptor<Person>())) ?? []).filter { !$0.isMe }.map(\.name)
         let items = ((try? modelContext.fetch(FetchDescriptor<ActionItem>(predicate: #Predicate { $0.status == "accepted" || $0.status == "suggested" }))) ?? []).map(\.title)
-        await SpeechEngine.shared.setVocabulary(Vocabulary.words(people: people, items: items))
+        let facts = ((try? modelContext.fetch(FetchDescriptor<Fact>())) ?? []).map(\.text)
+        let personal = await PersonalWords.words()
+        let extra = Learned.fixes.map(\.meant) + KnownFacts.names(in: facts) + personal
+        let words = Vocabulary.words(people: people, items: items, extra: extra, limit: 120)
+        guard await SpeechEngine.shared.expectedWords() != words else { return }
+        await SpeechEngine.shared.setVocabulary(words)
+        await LiveTranscriber.shared.refreshVocabulary()
     }
 
     private func knownVoices() -> [KnownVoice] {
@@ -396,9 +520,11 @@ actor Pipeline {
             return
         }
         c.threads = Threads.close(c.threads)
+        await remember(c, force: true)
+        let background = Prompts.background(memory: c.memory, facts: relevantFacts(to: c.memory.text() + " " + Prompts.tail(c.transcript, budget: 400), limit: 4))
         do {
             let transcript = c.transcript
-            guard let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript) }) })
+            guard let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript, background: background) }) })
             else { throw StepTimedOut(what: "summarising") }
             c.title = notes.title
             c.summary = notes.points.map { "\u{2022} " + $0 }.joined(separator: "\n")
@@ -407,12 +533,14 @@ actor Pipeline {
             let lines = ActionRules.candidateLines(c.transcript)
             guard !lines.isEmpty else { return }
             let recent = Array(lines.suffix(60)), start = c.start
-            guard let found = await withDeadline(60, { await Log.attempt("List items", { try await Brain.actions(lines: recent, start: start) }) })
+            let notesOnly = Prompts.background(memory: c.memory, facts: [])
+            guard let found = await withDeadline(60, { await Log.attempt("List items", { try await Brain.actions(lines: recent, start: start, background: notesOnly) }) })
             else { throw StepTimedOut(what: "finding list items") }
             let fromModel = ActionRules.fromModel(
                 buy: found.buy, todo: found.todo,
                 events: found.appointments.map { ($0.what, $0.when, $0.place, $0.booked) }, conversationStart: c.start, lines: recent)
             await suggest(for: c, found: ActionRules.merge(fromModel, ruleActions(c)))
+            await learnFacts(from: c)
         } catch {
             // Too long, or the model declined: keep the conversation, untitled.
             Log.error("Couldn't summarise a \(c.transcript.count)-character conversation", error)
@@ -433,6 +561,24 @@ actor Pipeline {
             && !fresh.contains(where: { $0.type == a.type && $0.title.lowercased() == a.title.lowercased() }) {
             fresh.append(a)
         }
+        // Appointments checked against the calendar: already there, nothing to suggest; there at
+        // another time, worth saying.
+        fresh = fresh.compactMap { a -> ExtractedAction? in
+            guard a.type == .event, let start = a.resolved?.start() else { return a }
+            let entries = PersonalWords.calendarEntries(from: start.addingTimeInterval(-15 * 86_400), to: start.addingTimeInterval(15 * 86_400))
+            switch CalendarCheck.check(title: a.title, start: start, allDay: a.resolved?.allDay ?? false, against: entries) {
+            case .alreadyThere?:
+                Log.info("Heard an appointment that's already in the calendar")
+                return nil
+            case .differs(let note)?:
+                var b = a
+                b.note = note
+                return b
+            case nil:
+                return a
+            }
+        }
+        guard !fresh.isEmpty else { return }
         for a in fresh {
             let heard = a.source.map { Self.heard($0, about: a, on: c.start) }
             let item = ActionItem(type: a.type.rawValue, title: a.title, start: a.resolved?.start(),

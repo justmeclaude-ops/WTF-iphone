@@ -160,7 +160,13 @@ public enum VoiceMatcher {
 public enum SpeakerAlign {
     public struct Word: Equatable, Sendable {
         public var start: Double, end: Double, text: String
-        public init(start: Double, end: Double, text: String) { self.start = start; self.end = end; self.text = text }
+        /// How sure the recogniser was of it (0–1), if it said.
+        public var confidence: Double?
+        /// What else the recogniser thought it might have been, likeliest first.
+        public var alternatives: [String]
+        public init(start: Double, end: Double, text: String, confidence: Double? = nil, alternatives: [String] = []) {
+            self.start = start; self.end = end; self.text = text; self.confidence = confidence; self.alternatives = alternatives
+        }
     }
 
     public struct Turn: Equatable, Sendable {

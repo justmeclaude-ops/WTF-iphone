@@ -14,6 +14,8 @@ final class LiveTranscriber: @unchecked Sendable {
     /// A word, placed by the recording it was heard in (its start) and where in it (seconds).
     struct TimedWord {
         var chunk: Date, start: Double, end: Double, text: String
+        var confidence: Double?
+        var alternatives: [String] = []
     }
 
     private static let rate = 16_000.0
@@ -84,6 +86,12 @@ final class LiveTranscriber: @unchecked Sendable {
                 await self?.stop()
             }
         }
+    }
+
+    /// The words to expect have changed (a name, a correction): the running recogniser is told.
+    func refreshVocabulary() async {
+        guard let analyzer = locked({ analyzer }) else { return }
+        await SpeechEngine.shared.applyVocabulary(to: analyzer)
     }
 
     func stop() async {
@@ -166,7 +174,8 @@ final class LiveTranscriber: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let placed = timed.compactMap { w -> TimedWord? in
             guard let p = place(w.start), p.chunk != .distantPast else { return nil }
-            return TimedWord(chunk: p.chunk, start: p.at, end: p.at + max(0, w.end - w.start), text: w.text)
+            return TimedWord(chunk: p.chunk, start: p.at, end: p.at + max(0, w.end - w.start), text: w.text,
+                             confidence: w.confidence, alternatives: w.alternatives)
         }
         if result.isFinal {
             words += placed
@@ -203,7 +212,7 @@ final class LiveTranscriber: @unchecked Sendable {
             let mine = words.filter { Self.same($0.chunk, from) }
             words.removeAll { $0.chunk <= from.addingTimeInterval(0.001) }
             ends = ends.filter { $0.key > from.addingTimeInterval(0.001) }
-            return mine.map { SpeakerAlign.Word(start: $0.start, end: $0.end, text: $0.text) }
+            return mine.map { SpeakerAlign.Word(start: $0.start, end: $0.end, text: $0.text, confidence: $0.confidence, alternatives: $0.alternatives) }
         }
     }
 

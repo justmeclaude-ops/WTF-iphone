@@ -44,10 +44,10 @@ public enum Prompts {
         """
 
     /// "What was I just on about?": only the last few minutes of the latest conversation.
-    public static func latest(question: String, transcript: String, topic: String?, now: Date) -> String {
+    public static func latest(question: String, transcript: String, topic: String?, now: Date, background: String = "") -> String {
         """
-        The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first; the last line is the most recent:
-        \(tail(TranscriptFormat.compact(transcript), budget: 900))
+        \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first; the last line is the most recent:
+        \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 900 : 700))
 
         It is now \(clock(now)). In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \
         unfinished, say what I was in the middle of saying. Only say I was interrupted if someone else spoke after me.
@@ -56,10 +56,10 @@ public enum Prompts {
     }
 
     /// The same, for reading aloud in your ear: one or two short sentences, no lists.
-    public static func spoken(transcript: String, topic: String?, leftAt: String?, now: Date) -> String {
+    public static func spoken(transcript: String, topic: String?, leftAt: String?, now: Date, background: String = "") -> String {
         """
-        The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), oldest first; the last line is the most recent:
-        \(tail(TranscriptFormat.compact(transcript), budget: 700))
+        \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), oldest first; the last line is the most recent:
+        \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 700 : 550))
         \(leftAt.map { "\nEarlier, I dropped a topic part-way: \($0)\n" } ?? "")
         It is now \(clock(now)). In one or two short sentences that will be read aloud to me, say what I was just \
         talking about and, if I trailed off, what I was in the middle of saying. No lists, no quotation marks.
@@ -89,12 +89,12 @@ public enum Prompts {
     }
 
     /// Any other question: titles and summaries of the day, plus the best-matching transcript.
-    public static func focused(question: String, notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, now: Date) -> String {
-        var body = "Conversations recorded on my phone:\n"
+    public static func focused(question: String, notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, now: Date, background: String = "") -> String {
+        var body = background + "Conversations recorded on my phone:\n"
         for n in notes.prefix(12) {
             body += "- \(n.label): \(n.title ?? "untitled")" + (n.summary.map { "\n  " + $0.replacingOccurrences(of: "\n", with: "\n  ") } ?? "") + "\n"
         }
-        if let best { body += "\nTranscript of \(best.label):\n" + tail(TranscriptFormat.compact(best.transcript), budget: 1_600) + "\n" }
+        if let best { body += "\nFrom the transcript of \(best.label):\n" + tail(TranscriptFormat.compact(best.transcript), budget: background.isEmpty ? 1_600 : 1_300) + "\n" }
         return body + "\nIt is now \(clock(now)). Answer my question in 2 to 4 short sentences, saying which conversation (its time) you mean.\nMy question: \(question)"
     }
 
@@ -114,16 +114,16 @@ public enum Prompts {
     }
 
     /// For summarising: the conversation as compact as it goes, cut to fit.
-    public static func summary(transcript: String) -> String {
-        "Summarise this conversation from my day. Say what was decided and what was only suggested or still needs doing " +
+    public static func summary(transcript: String, background: String = "") -> String {
+        background + "Summarise this conversation from my day. Say what was decided and what was only suggested or still needs doing " +
             "(a plan that has to be confirmed isn't booked). Keep each detail with what it was about: don't connect things " +
-            "that weren't connected (if batteries are for the remote, they aren't for a present).\n\n" + tail(TranscriptFormat.compact(transcript), budget: 2_400)
+            "that weren't connected (if batteries are for the remote, they aren't for a present).\n\n" + tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 2_400 : 2_000)
     }
 
     /// For finding things to act on.
-    public static func actions(lines: [String], conversationStart: Date) -> String {
+    public static func actions(lines: [String], conversationStart: Date, background: String = "") -> String {
         let f = DateFormatter(); f.dateFormat = "EEEE d MMMM"
-        return """
+        return background + """
             Lines from a conversation recorded on \(f.string(from: conversationStart)). Find appointments (with when they are, \
             in the words used), things to buy (one per item), and things the speaker said they would do. Be strict: an \
             appointment needs a day or a time actually said, and say whether it was actually booked or only suggested; if it \
@@ -133,5 +133,18 @@ public enum Prompts {
 
             \(lines.joined(separator: "\n"))
             """
+    }
+
+    /// Facts from a conversation worth keeping after today.
+    public static func lastingFacts(transcript: String, known: [String]) -> String {
+        """
+        A conversation recorded on my phone (lines marked "You" are mine):
+        \(tail(TranscriptFormat.compact(transcript), budget: 2_000))
+        \(known.isEmpty ? "" : "\nAlready known, don't repeat:\n" + known.prefix(15).map { "- " + $0 }.joined(separator: "\n") + "\n")
+        List facts from it worth remembering after today: birthdays and other dates, who people are (names, \
+        relationships, jobs), where people live or work, likes and dislikes, and plans with a date. Not passing \
+        chatter. Each fact a short sentence that makes sense on its own, e.g. "Mum's birthday is 2 November". \
+        Leave the list empty if nothing lasting was said.
+        """
     }
 }

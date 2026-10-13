@@ -46,6 +46,23 @@ final class Conversation {
         set { threadData = try? JSONEncoder().encode(newValue) }
     }
 
+    /// What it's been established so far ([ConversationMemory] as JSON), kept up to date as it goes.
+    var memoryData: Data?
+
+    var memory: ConversationMemory {
+        get { memoryData.flatMap { try? JSONDecoder().decode(ConversationMemory.self, from: $0) } ?? .empty }
+        set { memoryData = try? JSONEncoder().encode(newValue) }
+    }
+
+    /// Misheard words fixed in it, by the AI or by you ([LearnedFix] as JSON): applied again if
+    /// the whole conversation is transcribed afresh at the end.
+    var fixData: Data?
+
+    var fixes: [LearnedFix] {
+        get { fixData.flatMap { try? JSONDecoder().decode([LearnedFix].self, from: $0) } ?? [] }
+        set { fixData = try? JSONEncoder().encode(newValue) }
+    }
+
     var voiceprints: [Voiceprint] {
         get { voices.flatMap { try? JSONDecoder().decode([Voiceprint].self, from: $0) } ?? [] }
         set { voices = try? JSONEncoder().encode(newValue) }
@@ -108,6 +125,21 @@ final class ActionItem {
          status: String = "suggested", conversationID: UUID? = nil) {
         self.id = UUID(); self.type = type; self.title = title; self.start = start; self.allDay = allDay; self.place = place
         self.quote = quote; self.status = status; self.conversationID = conversationID; self.created = Date()
+    }
+}
+
+/// Something worth knowing beyond the day it was said ("Mum's birthday is 2 November"), picked
+/// out of a conversation or added by you: shown in Settings › Things WTF Knows, and given to the
+/// AI when it's relevant.
+@Model
+final class Fact {
+    @Attribute(.unique) var id: UUID
+    var text: String
+    var created: Date
+    var conversationID: UUID?
+
+    init(text: String, conversationID: UUID? = nil) {
+        self.id = UUID(); self.text = text; self.created = Date(); self.conversationID = conversationID
     }
 }
 

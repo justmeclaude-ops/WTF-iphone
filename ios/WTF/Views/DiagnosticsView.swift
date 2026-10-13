@@ -42,6 +42,10 @@ struct DiagnosticsView: View {
 
             Listening: \(model.recording ? "on" : "off")\(Recorder.shared.stalled ? " (mic stalled)" : "")
             Live transcription: \(LiveTranscriber.shared.running ? "running" : "off")
+            Speech detector: \(SpeechGate.shared.isReady ? "neural" : "loudness only")
+            Microphone: \(Recorder.shared.microphone)
+            Contacts: \(PersonalWords.useContacts && PersonalWords.contactsAllowed ? "used" : "not used"), calendar: \(PersonalWords.useCalendar && PersonalWords.calendarAllowed ? "used" : "not used")
+            Corrections learnt: \(Learned.fixes.count)
             Speech model: \(speech ? "ready" : "not installed")
             Apple Intelligence: \(Brain.notReadyReason ?? "ready")
             Voices: \(VoiceEngine.enabled ? "on" : "off"), models \(VoiceEngine.downloaded ? "downloaded" : "not downloaded")

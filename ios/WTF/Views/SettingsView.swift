@@ -15,6 +15,11 @@ struct SettingsView: View {
     @State private var voicesLoading = false
     @State private var voicesFailed = false
     @Query(sort: \Person.name) private var people: [Person]
+    @Query private var facts: [Fact]
+    @AppStorage("useContacts") private var useContacts = false
+    @AppStorage("useCalendar") private var useCalendar = false
+    @AppStorage("airPodsMic") private var airPodsMic = false
+    @State private var accessProblem: String?
 
     var body: some View {
         @Bindable var model = model
@@ -23,7 +28,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("Listen Continuously", isOn: Binding(get: { model.recording }, set: { model.setListening($0) })).tint(.green)
                 } footer: {
-                    Text("Only speech is kept: silence is never stored, and audio is deleted once it's transcribed. iPhones stop apps that are swiped away, so leave WTF open in the background.")
+                    Text("Only speech is kept: silence and music are never stored, and audio is deleted once its conversation is over. iPhones stop apps that are swiped away, so leave WTF open in the background.")
                 }
 
                 Section("On This iPhone") {
@@ -56,6 +61,31 @@ struct SettingsView: View {
                     Text("Voices")
                 } footer: {
                     Text("Labels who said what. Tap a speaker in any transcript to say it\u{2019}s you or who they are, and WTF knows their voice from then on. Voiceprints stay on this iPhone.")
+                }
+
+                Section {
+                    NavigationLink(value: "facts") {
+                        LabeledContent("Things WTF Knows", value: facts.isEmpty ? "None yet" : "\(facts.count)")
+                    }
+                    NavigationLink(value: "fixes") {
+                        LabeledContent("Words You\u{2019}ve Corrected", value: Learned.fixes.isEmpty ? "None yet" : "\(Learned.fixes.count)")
+                    }
+                    Toggle("Names from Contacts", isOn: Binding(get: { useContacts }, set: { on in allow(on, contacts: true) })).tint(.green)
+                    Toggle("Use My Calendar", isOn: Binding(get: { useCalendar }, set: { on in allow(on, contacts: false) })).tint(.green)
+                    if let accessProblem { Text(accessProblem).font(.footnote).foregroundStyle(.red) }
+                } header: {
+                    Text("Understanding You")
+                } footer: {
+                    Text("Your contacts\u{2019} names and the names and places in your calendar help it hear them right, and appointments it hears are checked against your calendar. Fix a word in any transcript by holding it, and the same mistake is caught next time. All of it stays on this iPhone.")
+                }
+
+                Section {
+                    Toggle("Use AirPods Microphone", isOn: $airPodsMic).tint(.green)
+                        .onChange(of: airPodsMic) { Recorder.shared.microphoneChanged() }
+                } header: {
+                    Text("Microphone")
+                } footer: {
+                    Text("With newer AirPods in, record through them in high quality: your own voice comes through much clearer, people further away a little quieter. AirPods that can\u{2019}t record in high quality aren\u{2019}t used, so music doesn\u{2019}t drop to call quality.")
                 }
 
                 Section {
@@ -93,6 +123,8 @@ struct SettingsView: View {
                 switch page {
                 case "people": PeopleView()
                 case "voice": VoicePicker()
+                case "facts": FactsView()
+                case "fixes": FixesView()
                 default: DiagnosticsView()
                 }
             }
@@ -100,6 +132,25 @@ struct SettingsView: View {
             .confirmationDialog("Delete every conversation, transcript, list item and voice?", isPresented: $confirmWipe, titleVisibility: .visible) {
                 Button("Delete Everything", role: .destructive) { Task { await model.pipeline.deleteEverything() } }
             }
+        }
+    }
+
+    /// Turning Contacts or Calendar on asks iOS for access first.
+    private func allow(_ on: Bool, contacts: Bool) {
+        accessProblem = nil
+        guard on else {
+            if contacts { useContacts = false } else { useCalendar = false }
+            PersonalWords.forget()
+            return
+        }
+        Task {
+            let granted = contacts ? await PersonalWords.askForContacts() : await PersonalWords.askForCalendar()
+            if contacts { useContacts = granted } else { useCalendar = granted }
+            PersonalWords.forget()
+            if !granted {
+                accessProblem = "WTF wasn\u{2019}t given access. Turn it on in Settings › Privacy & Security › \(contacts ? "Contacts" : "Calendars") › WTF."
+            }
+            model.processNow()
         }
     }
 

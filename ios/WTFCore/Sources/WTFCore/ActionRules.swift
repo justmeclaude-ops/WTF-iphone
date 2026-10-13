@@ -251,7 +251,7 @@ public enum ActionRules {
     }
 
     static let stop: Set<String> = ["the", "a", "an", "to", "for", "of", "and", "some", "my", "your", "with", "on", "at", "by", "tonight", "tomorrow", "today"]
-    static func words(_ s: String) -> Set<String> {
+    public static func words(_ s: String) -> Set<String> {
         Set(Rx(#"[a-z0-9']+"#).all(s.lowercased()).map { w in
             var x = w[0]
             if x.hasSuffix("s") { x.removeLast() }

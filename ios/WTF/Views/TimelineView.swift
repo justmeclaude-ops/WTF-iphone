@@ -239,6 +239,11 @@ struct ConversationView: View {
     @State private var typed = ""
     @State private var note: String?
     @State private var saved = 0
+    /// The line being fixed, and its words as they're being edited.
+    @State private var fixing: String?
+    @State private var fixedText = ""
+    /// "Is Speaker 2 Sarah?" suggestions turned down.
+    @AppStorage("declinedNames") private var declined = ""
 
     var body: some View {
         List {
@@ -258,6 +263,21 @@ struct ConversationView: View {
                     ThreadList(threads: conversation.threads) { model.askAbout($0, in: conversation.id) }
                 }
             }
+            if let hint = nameHints.first {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Is \(hint.label) \(hint.name)?").font(.headline)
+                        Text("Someone called them \(hint.name)\(hint.times > 1 ? " \(hint.times) times" : "").")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                        HStack {
+                            Button("Yes") { name(hint.label, as: hint.name) }.buttonStyle(.bordered)
+                            Button("No") { declined += "\n" + key(hint) }.buttonStyle(.borderless).foregroundStyle(.secondary)
+                        }
+                        .buttonBorderShape(.capsule)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
             Section {
                 ForEach(Array(conversation.transcript.split(separator: "\n").enumerated()), id: \.offset) { _, line in
                     let parts = parse(String(line))
@@ -270,7 +290,14 @@ struct ConversationView: View {
                             }
                             Text(parts.time).font(.caption).foregroundStyle(.secondary)
                         }
-                        Text(parts.text).textSelection(.enabled)
+                        Text(parts.text)
+                    }
+                    .contextMenu {
+                        Button("Fix Words\u{2026}", systemImage: "character.cursor.ibeam") {
+                            fixedText = parts.text
+                            fixing = String(line)
+                        }
+                        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = parts.text }
                     }
                 }
             } header: {
@@ -295,6 +322,19 @@ struct ConversationView: View {
         } message: {
             Text("WTF will recognise their voice from now on, here and in your other conversations.")
         }
+        .sheet(isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } })) {
+            FixWordsSheet(text: $fixedText) { save in
+                if save, let line = fixing {
+                    let id = conversation.id, typed = fixedText
+                    Task {
+                        await model.pipeline.fixLine(in: id, original: line, text: typed)
+                        saved += 1
+                        note = "Fixed. WTF will catch that next time."
+                    }
+                }
+                fixing = nil
+            }
+        }
         .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
                 Task { await model.pipeline.deleteConversation(conversation.id) }
@@ -312,6 +352,15 @@ struct ConversationView: View {
             naming = who
         }
     }
+
+    /// Names for unnamed voices from how people were addressed, minus any turned down.
+    private var nameHints: [NameHints.Hint] {
+        guard hasUnnamedVoices else { return [] }
+        let no = Set(declined.split(separator: "\n").map(String.init))
+        return NameHints.suggest(conversation.transcript, isName: NameCheck.isName).filter { !no.contains(key($0)) }
+    }
+
+    private func key(_ hint: NameHints.Hint) -> String { "\(conversation.id.uuidString)|\(hint.label)|\(hint.name)" }
 
     private var hasUnnamedVoices: Bool {
         Labels.speakers(in: conversation.transcript).contains { Labels.number($0) != nil }
@@ -337,6 +386,32 @@ struct ConversationView: View {
         let who = String(rest[..<colon.lowerBound])
         let text = String(rest[colon.upperBound...])
         return (time, who == Labels.anonymous ? nil : who, text)
+    }
+}
+
+/// Correcting what was misheard in a line: the words, editable.
+struct FixWordsSheet: View {
+    @Binding var text: String
+    let done: (Bool) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("What was said", text: $text, axis: .vertical)
+                        .lineLimit(3...12)
+                } footer: {
+                    Text("Change only what was misheard. WTF learns the correction, so the same mistake is caught next time.")
+                }
+            }
+            .navigationTitle("Fix Words")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { done(false) } }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { done(true) }.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty) }
+            }
+        }
+        .presentationDetents([.medium])
     }
 }
 

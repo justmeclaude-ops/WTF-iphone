@@ -207,8 +207,9 @@ public enum Vocabulary {
         "Halfords", "B&M", "Home Bargains", "Poundland", "The Range", "Dunelm", "IKEA", "Costa", "Pret", "Nando's",
     ]
 
-    /// At most [limit] words: people first, then list items, then shops.
-    public static func words(people: [String], items: [String], limit: Int = 100) -> [String] {
+    /// At most [limit] words: people first, then [extra] (in its order: what you've corrected, names
+    /// from what WTF knows, your contacts and calendar), then list items, then shops.
+    public static func words(people: [String], items: [String], extra: [String] = [], limit: Int = 100) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
         func add(_ w: String) {
@@ -217,6 +218,7 @@ public enum Vocabulary {
             out.append(t)
         }
         people.forEach(add)
+        extra.forEach(add)
         // Names and places in list items: the capitalised words after the first.
         for item in items {
             for w in item.split(separator: " ").dropFirst() where w.first?.isUppercase == true {

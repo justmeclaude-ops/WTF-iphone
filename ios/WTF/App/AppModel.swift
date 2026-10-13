@@ -41,7 +41,7 @@ final class AppModel {
     static let quickQuestion = "WTF was I just on about?"
 
     private init() {
-        container = try! ModelContainer(for: Chunk.self, Conversation.self, ActionItem.self, Person.self)
+        container = try! ModelContainer(for: Chunk.self, Conversation.self, ActionItem.self, Person.self, Fact.self)
         pipeline = Pipeline(modelContainer: container)
         let pipeline = pipeline
         Recorder.shared.onChunk = { url, start, end in
@@ -179,7 +179,8 @@ final class AppModel {
                     messages.append(ChatMessage(fromUser: false, text: recap))
                 }
                 guard Brain.notReadyReason == nil else { return }
-                await answer(Prompts.latest(question: q, transcript: latest.transcript, topic: latest.title, now: now))
+                let background = await pipeline.latestBackground()
+                await answer(Prompts.latest(question: q, transcript: latest.transcript, topic: latest.title, now: now, background: background))
                 return
             }
             if let why = Brain.notReadyReason {
@@ -191,7 +192,7 @@ final class AppModel {
                 messages.append(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
                 return
             }
-            await answer(Prompts.focused(question: q, notes: found.notes, best: found.best, now: now))
+            await answer(Prompts.focused(question: q, notes: found.notes, best: found.best, now: now, background: found.background))
         }
     }
 
@@ -228,7 +229,8 @@ final class AppModel {
             let threads = await pipeline.latestThreads()
             let hanging = Threads.hanging(threads).first.map { "\($0.title): \($0.leftAt ?? "")" }
             let topic = threads.last(where: { $0.status == .current })?.title ?? latest?.title
-            if let gist = await Brain.quick(Prompts.spoken(transcript: transcript, topic: topic, leftAt: hanging, now: now), seconds: ai)?
+            let background = await pipeline.latestBackground()
+            if let gist = await Brain.quick(Prompts.spoken(transcript: transcript, topic: topic, leftAt: hanging, now: now, background: background), seconds: ai)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !gist.isEmpty {
                 return (gist, covers, true)
             }

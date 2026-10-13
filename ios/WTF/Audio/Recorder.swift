@@ -75,11 +75,61 @@ final class Recorder: @unchecked Sendable {
 
     func start() throws {
         guard !running else { return }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP])
-        try session.setActive(true)
+        SpeechGate.shared.start()
+        try configureSession()
         try installTap()
         running = true
+    }
+
+    /// Settings › Use AirPods Microphone.
+    static var airPodsMic: Bool { UserDefaults.standard.bool(forKey: "airPodsMic") }
+    private static let base: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+    /// What it's recording through, for Diagnostics.
+    private(set) var microphone = "iPhone"
+
+    /// The audio session, set up to record through the iPhone's microphones, or (if that's turned
+    /// on) through AirPods that can record in high quality. Never through headphones in call
+    /// quality: that would make everything else they play sound like a phone call too.
+    private func configureSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        if Self.airPodsMic {
+            var options = Self.base.union([.allowBluetoothHFP, .bluetoothHighQualityRecording])
+            if #available(iOS 26.2, *) { options.insert(.farFieldInput) }
+            do {
+                try use(options)
+                try session.setActive(true)
+                guard let port = session.currentRoute.inputs.first else { return }
+                if let mic = port.bluetoothMicrophoneExtension {
+                    if mic.highQualityRecording.isEnabled || mic.farFieldCapture.isEnabled {
+                        microphone = port.portName + (mic.farFieldCapture.isEnabled ? " (high quality, far field)" : " (high quality)")
+                        Log.info("Recording through \(microphone)")
+                        return
+                    }
+                    Log.info("\(port.portName) can't record in high quality, so the iPhone's microphone is used")
+                } else if port.portType != .bluetoothHFP {
+                    // No AirPods in: the iPhone's microphone, ready to switch when they're put in.
+                    microphone = "iPhone"
+                    return
+                }
+            } catch {
+                Log.error("Couldn't record through the AirPods", error)
+            }
+        }
+        try use(Self.base)
+        try session.setActive(true)
+        microphone = "iPhone"
+    }
+
+    private func use(_ options: AVAudioSession.CategoryOptions) throws {
+        let session = AVAudioSession.sharedInstance()
+        guard session.category != .playAndRecord || session.mode != .default || session.categoryOptions != options else { return }
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
+    }
+
+    /// The microphone setting changed: listening carries on through the right one.
+    func microphoneChanged() {
+        guard running else { return }
+        resume(why: "on the new microphone setting")
     }
 
     func stop() {
@@ -116,7 +166,8 @@ final class Recorder: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         do {
-            try AVAudioSession.sharedInstance().setActive(true)
+            // AirPods put in or taken out: the right microphone for the new route.
+            try configureSession()
             try installTap()
         } catch {
             running = false
@@ -171,7 +222,10 @@ final class Recorder: @unchecked Sendable {
     }
 
     private func onFrame(_ frame: [Float], at now: Date) {
-        let speech = vad.isSpeech(frame)
+        // The neural detector when it's ready; loudness otherwise (it keeps its noise floor either way).
+        let loud = vad.isSpeech(frame)
+        SpeechGate.shared.feed(frame)
+        let speech = SpeechGate.shared.isSpeech(recording: writer != nil) ?? loud
         recent.append(speech)
         if recent.count > 10 { recent.removeFirst() }
 

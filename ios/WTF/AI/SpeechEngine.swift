@@ -20,13 +20,16 @@ actor SpeechEngine {
     /// [live]: also reports words before they're final, for transcribing as you speak.
     func makeTranscriber(live: Bool = false) async -> SpeechTranscriber {
         SpeechTranscriber(locale: await transcriberLocale(), transcriptionOptions: [],
-                          reportingOptions: live ? [.volatileResults] : [], attributeOptions: [.audioTimeRange])
+                          reportingOptions: live ? [.volatileResults] : [], attributeOptions: [.audioTimeRange, .transcriptionConfidence])
     }
 
     /// Words it should expect: people you've named, shops, things on your list.
     private var vocabulary: [String] = []
 
     func setVocabulary(_ words: [String]) { vocabulary = words }
+
+    /// The words it's been told to expect, for the AI that fixes misheard words.
+    func expectedWords() -> [String] { vocabulary }
 
     func applyVocabulary(to analyzer: SpeechAnalyzer) async {
         guard !vocabulary.isEmpty else { return }
@@ -35,7 +38,8 @@ actor SpeechEngine {
         do { try await analyzer.setContext(context) } catch { Log.error("Couldn't give the recogniser its \(vocabulary.count) words", error) }
     }
 
-    /// A result's words, each with when it was said (seconds into the audio).
+    /// A result's words, each with when it was said (seconds into the audio), how sure the
+    /// recogniser was of it, and what else it might have been.
     static func timedWords(_ result: SpeechTranscriber.Result) -> [SpeakerAlign.Word] {
         let text = result.text
         var timed: [SpeakerAlign.Word] = []
@@ -43,11 +47,21 @@ actor SpeechEngine {
             let piece = String(text[run.range].characters)
             guard !piece.isEmpty else { continue }
             if let range = run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self] {
-                timed.append(SpeakerAlign.Word(start: range.start.seconds, end: range.end.seconds, text: piece))
+                let confidence = run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self].map { Double($0) }
+                timed.append(SpeakerAlign.Word(start: range.start.seconds, end: range.end.seconds, text: piece, confidence: confidence))
             } else if !timed.isEmpty {
                 timed[timed.count - 1].text += piece // punctuation and spaces belong to the word before
             } else {
                 timed.append(SpeakerAlign.Word(start: result.range.start.seconds, end: result.range.start.seconds, text: piece))
+            }
+        }
+        // The recogniser's runner-up readings of the phrase, lined up with the words they'd replace.
+        if result.alternatives.count > 1, !timed.isEmpty {
+            let others = result.alternatives.dropFirst().prefix(3).map { alt in
+                String(alt.characters).split(whereSeparator: \.isWhitespace).map(String.init)
+            }
+            for (i, readings) in Doubts.alternatives(top: timed.map(\.text), others: Array(others)) where i < timed.count {
+                timed[i].alternatives = readings
             }
         }
         // No word timings: the phrase as one.
