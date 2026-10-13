@@ -25,8 +25,12 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         let session = AVAudioSession.sharedInstance()
         // While listening the session can already play and record; otherwise, just play.
         if !Recorder.shared.running {
-            try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try? session.setActive(true)
+            do {
+                try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+                try session.setActive(true)
+            } catch {
+                Log.error("Couldn't get the headphones to read the answer out", error)
+            }
         }
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text.replacingOccurrences(of: "\u{2026}", with: ", "))

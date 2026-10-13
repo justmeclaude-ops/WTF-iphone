@@ -11,29 +11,22 @@ struct AskWTFIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let model = AppModel.shared
-        let answer = await model.spokenRecap()
-        model.messages.append(ChatMessage(fromUser: true, text: AppModel.quickQuestion))
-        model.messages.append(ChatMessage(fromUser: false, text: answer))
-        if ReadAloud.headphonesOn {
-            await ReadAloud.shared.say(answer)
-            return .result(dialog: "Read out in your headphones.")
-        }
+        let answer = await AppModel.shared.answerFromShortcut()
         return .result(dialog: "\(answer)")
     }
 }
 
-/// "Hey Siri, WTF was I saying?": answered out loud (AirPods, CarPlay, a locked phone), without
-/// opening the app.
+/// "What was I saying?" from the Action button, Siri or a Shortcut, without opening the app:
+/// read into your ears if AirPods or headphones are in, shown at the top of the screen if not.
 struct WhatWasISayingIntent: AppIntent {
     static let title: LocalizedStringResource = "What Was I Saying?"
-    static let description = IntentDescription("Tells you out loud what you were just on about, without opening WTF.")
+    static let description = IntentDescription("What you were just on about: read into your AirPods if they're in, shown on screen if not.")
     static let openAppWhenRun = false
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.spokenRecap()
+        let answer = await AppModel.shared.answerFromShortcut()
         return .result(dialog: "\(answer)")
     }
 }

@@ -194,6 +194,17 @@ final class AppModel {
         }
     }
 
+    /// The Action button's (or Siri's) answer: worked out, kept in Ask, and read into your ears
+    /// if AirPods or headphones are in. Returns what to show on screen.
+    func answerFromShortcut() async -> String {
+        let answer = await spokenRecap()
+        messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
+        messages.append(ChatMessage(fromUser: false, text: answer))
+        guard ReadAloud.headphonesOn else { return answer }
+        await ReadAloud.shared.say(answer)
+        return "Read out in your headphones.\n\n" + answer
+    }
+
     /// The answer to "what was I saying?", short enough to be read out in your ear.
     func spokenRecap() async -> String {
         Recorder.shared.flush()
