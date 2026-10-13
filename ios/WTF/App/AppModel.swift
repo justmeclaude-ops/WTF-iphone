@@ -48,6 +48,7 @@ final class AppModel {
             Task {
                 await pipeline.addChunk(url: url, start: start, end: end)
                 await pipeline.run()
+                await Standby.shared.refresh()
             }
         }
         Recorder.shared.onSpeech = { samples, chunk, offset in LiveTranscriber.shared.feed(samples, chunk: chunk, offset: offset) }
@@ -194,37 +195,46 @@ final class AppModel {
         }
     }
 
-    /// The Action button's (or Siri's) answer: worked out, kept in Ask, and read into your ears
-    /// if AirPods or headphones are in. Returns what to show on screen.
+    /// The Action button's (or Siri's) answer: kept in Ask, read into your ears if AirPods or
+    /// headphones are in, and returned to show on screen. Always back within a few seconds: it
+    /// uses the answer kept ready while you talked if nothing's been said since, otherwise
+    /// works one out with a short limit, and falls back to what was said word for word.
     func answerFromShortcut() async -> String {
-        let answer = await spokenRecap()
+        let pressed = Date()
+        let answer = await Standby.shared.answerNow()
         messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
         messages.append(ChatMessage(fromUser: false, text: answer))
-        // Read out before the answer's shown: the app stays awake while it's speaking, and is
-        // free to be put to sleep the moment the answer's handed back.
-        _ = await ReadAloud.shared.sayIntoHeadphones(answer)
+        // Waits only until it's started playing: the sound keeps the app awake to the end.
+        let reading = await ReadAloud.shared.startIntoHeadphones(answer)
+        Log.info("Action button: answered in \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s, \(reading ? "reading it out" : "shown only")")
         return answer
     }
 
-    /// The answer to "what was I saying?", short enough to be read out in your ear.
-    func spokenRecap() async -> String {
-        Recorder.shared.flush()
-        let pipeline = pipeline
-        _ = await withDeadline(6) { await pipeline.catchUp() }
-        guard let latest = await pipeline.latestConversation() else {
-            return recording ? "I haven't heard anything yet." : "I'm not listening at the moment. Open WTF to turn listening on."
-        }
+    /// The answer to "what was I saying?", short enough to be read out in your ear, from what's
+    /// been transcribed so far plus [live] (words heard in the last few seconds, not yet sorted
+    /// by speaker). Nil if nothing's been heard. [ai]: seconds to give Apple Intelligence (0: none).
+    func workOutRecap(live: String, ai: Double) async -> (text: String, covers: Date, byAI: Bool)? {
+        let latest = await pipeline.latestConversation()
         let now = Date()
-        let threads = await pipeline.latestThreads()
-        if Brain.notReadyReason == nil {
+        var transcript = latest?.transcript ?? ""
+        if !live.isEmpty {
+            let line = TranscriptFormat.lines([Utterance(start: now, speaker: Labels.anonymous, text: live)])
+            transcript += (transcript.isEmpty ? "" : "\n") + line
+        }
+        guard !transcript.isEmpty else { return nil }
+        let start = latest?.start ?? now
+        let covers = latest?.end ?? .distantPast
+        if ai > 0, Brain.notReadyReason == nil {
+            let threads = await pipeline.latestThreads()
             let hanging = Threads.hanging(threads).first.map { "\($0.title): \($0.leftAt ?? "")" }
-            let topic = threads.last(where: { $0.status == .current })?.title ?? latest.title
-            if let gist = await Brain.quick(Prompts.spoken(transcript: latest.transcript, topic: topic, leftAt: hanging, now: now), seconds: 5),
-               !gist.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return gist.trimmingCharacters(in: .whitespacesAndNewlines)
+            let topic = threads.last(where: { $0.status == .current })?.title ?? latest?.title
+            if let gist = await Brain.quick(Prompts.spoken(transcript: transcript, topic: topic, leftAt: hanging, now: now), seconds: ai)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !gist.isEmpty {
+                return (gist, covers, true)
             }
         }
-        return QuickRecap.spoken(latest.transcript, start: latest.start, now: now) ?? "I haven't heard anything yet."
+        guard let plain = QuickRecap.spoken(transcript, start: start, now: now) else { return nil }
+        return (plain, covers, false)
     }
 
     /// Tapping a topic on the trail: where you'd got to with it.

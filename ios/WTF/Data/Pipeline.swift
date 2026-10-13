@@ -119,10 +119,10 @@ actor Pipeline {
         try? modelContext.save()
     }
 
-    func latestConversation() -> (transcript: String, start: Date, title: String?)? {
+    func latestConversation() -> (transcript: String, start: Date, end: Date, title: String?)? {
         var d = FetchDescriptor<Conversation>(sortBy: [SortDescriptor(\.end, order: .reverse)])
         d.fetchLimit = 1
-        return (try? modelContext.fetch(d))?.first.map { ($0.transcript, $0.start, $0.title) }
+        return (try? modelContext.fetch(d))?.first.map { ($0.transcript, $0.start, $0.end, $0.title) }
     }
 
     /// Counts for the diagnostics report (no content).

@@ -4,24 +4,23 @@ import AVFoundation
 /// where you'd got to without looking at the phone.
 ///
 /// The speech is made into sound first and then played by the app itself, rather than handed to
-/// iOS's speech service to play: from the background (the Action button with the app closed or
-/// asleep) the service would sometimes say nothing at all. Played by the app, the sound keeps the
-/// app awake until it's finished, and if making it fails that's known and it tries again.
+/// iOS's speech service to play: from the background the service would sometimes say nothing.
+/// Played by the app, the sound keeps the app awake until it's finished. The Action button's
+/// answer has its sound made in advance (see Standby), so a press only has to play it.
 @MainActor
-final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
+final class ReadAloud: NSObject {
     static let shared = ReadAloud()
 
     private var synthesizer = AVSpeechSynthesizer()
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var connected: AVAudioFormat?
-    /// Each reading has a number, so a newer one stops an older one.
+    /// Each reading has a number, so a newer one takes over from an older one.
     private var reading = 0
-    private var spoken: CheckedContinuation<Void, Never>?
+    private var prepared: (key: String, sound: [AVAudioPCMBuffer])?
 
     override private init() {
         super.init()
-        synthesizer.delegate = self
         engine.attach(player)
     }
 
@@ -35,33 +34,33 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         AVAudioSession.sharedInstance().currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
     }
 
-    /// For the Action button: reads [text] out if headphones are the way sound is going, and
-    /// returns once it's been said. False if there are no headphones (nothing is played).
-    func sayIntoHeadphones(_ text: String) async -> Bool {
+    /// For the Action button: starts reading [text] into the headphones and returns as soon as
+    /// it's playing (false if there are no headphones, so nothing is played). The sound itself
+    /// keeps the app awake until it's finished.
+    func startIntoHeadphones(_ text: String) async -> Bool {
         let ownSession = prepareSession()
         guard Self.headphonesOn else {
             Log.info("Not read aloud: sound is going to \(Self.route), not headphones")
             if ownSession { releaseSession() }
             return false
         }
-        await speak(text, voice: Self.voice, speed: Self.speed)
-        if ownSession { releaseSession() }
+        await start(text, voice: Self.voice, speed: Self.speed, ownSession: ownSession)
         return true
     }
 
-    /// Says [text] and returns once it's been said.
-    func say(_ text: String) async {
-        let ownSession = prepareSession()
-        await speak(text, voice: Self.voice, speed: Self.speed)
-        if ownSession { releaseSession() }
+    /// The answer kept ready for the Action button: its sound made now, so a press just plays it.
+    func prepare(_ text: String) async {
+        let key = Self.key(text, Self.voice, Self.speed)
+        guard prepared?.key != key else { return }
+        let sound = await render(utterance(text, voice: Self.voice, speed: Self.speed))
+        if !sound.isEmpty { prepared = (key, sound) }
     }
 
     /// Settings › Read-Aloud Voice: a short sample in [voice] at [speed].
     func sample(_ voice: AVSpeechSynthesisVoice?, speed: Double) {
         Task {
             let ownSession = prepareSession()
-            await speak("You were telling them about booking the dentist for Thursday.", voice: voice, speed: speed)
-            if ownSession { releaseSession() }
+            await start("You were telling them about booking the dentist for Thursday.", voice: voice, speed: speed, ownSession: ownSession)
         }
     }
 
@@ -86,49 +85,60 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    private func speak(_ text: String, voice: AVSpeechSynthesisVoice?, speed: Double) async {
+    private static func key(_ text: String, _ voice: AVSpeechSynthesisVoice?, _ speed: Double) -> String {
+        "\(voice?.identifier ?? "")|\(speed)|\(text)"
+    }
+
+    private func utterance(_ text: String, voice: AVSpeechSynthesisVoice?, speed: Double) -> AVSpeechUtterance {
+        let u = AVSpeechUtterance(string: text.replacingOccurrences(of: "\u{2026}", with: ", "))
+        u.voice = voice
+        u.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(speed))
+        return u
+    }
+
+    /// Starts saying [text]; returns once it's playing. When it's finished (unless a newer
+    /// reading has taken over) the session's let go, if it was set up for this.
+    private func start(_ text: String, voice: AVSpeechSynthesisVoice?, speed: Double, ownSession: Bool) async {
         reading += 1
         let mine = reading
         player.stop()
         synthesizer.stopSpeaking(at: .immediate)
-        let clean = text.replacingOccurrences(of: "\u{2026}", with: ", ")
-        func utterance() -> AVSpeechUtterance {
-            let u = AVSpeechUtterance(string: clean)
-            u.voice = voice
-            u.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(speed))
-            return u
+        let key = Self.key(text, voice, speed)
+        // Made into sound here (or already, if it's the answer kept ready), then played here; a
+        // second go with a fresh synthesiser if the first came back empty.
+        var sound: [AVAudioPCMBuffer]
+        if let prepared, prepared.key == key {
+            sound = prepared.sound
+        } else {
+            sound = await render(utterance(text, voice: voice, speed: speed))
         }
-        // Made into sound here, then played here; a second go with a fresh synthesiser if the first
-        // came back empty (it can, the first time after the app's been woken).
-        var sound = await render(utterance())
         if sound.isEmpty {
             Log.error("Speech came back silent; trying again")
             synthesizer = AVSpeechSynthesizer()
-            synthesizer.delegate = self
-            sound = await render(utterance())
+            sound = await render(utterance(text, voice: voice, speed: speed))
         }
         guard mine == reading else { return }
-        if !sound.isEmpty, await play(sound) {
-            Log.info("Read an answer aloud into \(Self.route)")
+        if !sound.isEmpty, let heard = startPlaying(sound) {
+            Log.info("Reading an answer aloud into \(Self.route)")
+            Task {
+                await heard()
+                guard mine == self.reading else { return }
+                self.player.stop()
+                self.engine.stop()
+                if ownSession { self.releaseSession() }
+            }
             return
         }
         // Last resort: let iOS's speech service say it.
         Log.error("Couldn't play the speech; handing it to iOS to say into \(Self.route)")
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            spoken = done
-            synthesizer.speak(utterance())
-            Task {
-                try? await Task.sleep(for: .seconds(60))
-                self.finishSpeaking()
-            }
-        }
+        synthesizer.speak(utterance(text, voice: voice, speed: speed))
     }
 
-    /// The speech as sound, or nothing if the synthesiser didn't produce any within a few seconds.
+    /// The speech as sound, or nothing if the synthesiser didn't produce any within 6 s.
     private func render(_ utterance: AVSpeechUtterance) async -> [AVAudioPCMBuffer] {
         let collected = Collected()
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            collected.done = done
+            collected.wait(done)
             synthesizer.write(utterance) { buffer in
                 guard let pcm = buffer as? AVAudioPCMBuffer, pcm.frameLength > 0 else {
                     collected.finish()
@@ -137,16 +147,17 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
                 if let copy = Self.floatCopy(pcm) { collected.add(copy) }
             }
             Task {
-                try? await Task.sleep(for: .seconds(8))
+                try? await Task.sleep(for: .seconds(6))
                 collected.finish()
             }
         }
         return collected.buffers
     }
 
-    /// Plays [sound] and returns once it's been heard (true), or false if it couldn't be played.
-    private func play(_ sound: [AVAudioPCMBuffer]) async -> Bool {
-        guard let format = sound.first?.format else { return false }
+    /// Starts playing [sound]; the returned wait ends once it's been heard (or should have been).
+    /// Nil if it couldn't be played.
+    private func startPlaying(_ sound: [AVAudioPCMBuffer]) -> (() async -> Void)? {
+        guard let format = sound.first?.format else { return nil }
         if connected != format {
             engine.stop()
             engine.connect(player, to: engine.mainMixerNode, format: format)
@@ -156,28 +167,27 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
             if !engine.isRunning { try engine.start() }
         } catch {
             Log.error("Couldn't start playing the speech", error)
-            return false
+            return nil
         }
         let seconds = sound.reduce(0.0) { $0 + Double($1.frameLength) / format.sampleRate }
         let heard = Collected()
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            heard.done = done
-            for (i, buffer) in sound.enumerated() {
-                if i == sound.count - 1 {
-                    player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in heard.finish() }
-                } else {
-                    player.scheduleBuffer(buffer, completionHandler: nil)
-                }
-            }
-            player.play()
-            Task {
-                try? await Task.sleep(for: .seconds(seconds + 5))
-                heard.finish()
+        for (i, buffer) in sound.enumerated() {
+            if i == sound.count - 1 {
+                player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in heard.finish() }
+            } else {
+                player.scheduleBuffer(buffer, completionHandler: nil)
             }
         }
-        player.stop()
-        engine.stop()
-        return true
+        player.play()
+        return {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                heard.wait(done)
+                Task {
+                    try? await Task.sleep(for: .seconds(seconds + 5))
+                    heard.finish()
+                }
+            }
+        }
     }
 
     /// The synthesiser hands over its own buffers (sometimes 16-bit); a float copy the player can take.
@@ -190,26 +200,35 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         return out
     }
 
-    /// Sound as it arrives from the synthesiser, and a wait that ends exactly once (when it's
-    /// all there, or it's taken too long).
+    /// Sound as it arrives from the synthesiser, and a wait that ends exactly once: when it's
+    /// all there (or heard), or it's taken too long. It can finish before anyone waits.
     private final class Collected: @unchecked Sendable {
         private let lock = NSLock()
         private var _buffers: [AVAudioPCMBuffer] = []
-        var done: CheckedContinuation<Void, Never>?
+        private var waiting: CheckedContinuation<Void, Never>?
+        private var finished = false
 
         var buffers: [AVAudioPCMBuffer] { lock.lock(); defer { lock.unlock() }; return _buffers }
 
+        func wait(_ c: CheckedContinuation<Void, Never>) {
+            lock.lock()
+            if finished { lock.unlock(); c.resume(); return }
+            waiting = c
+            lock.unlock()
+        }
+
         func add(_ b: AVAudioPCMBuffer) {
             lock.lock(); defer { lock.unlock() }
-            if done != nil { _buffers.append(b) }
+            if !finished { _buffers.append(b) }
         }
 
         func finish() {
             lock.lock()
-            let d = done
-            done = nil
+            finished = true
+            let w = waiting
+            waiting = nil
             lock.unlock()
-            d?.resume()
+            w?.resume()
         }
     }
 
@@ -238,20 +257,5 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) }
             .sorted { ($0.quality.rawValue, $1.name) > ($1.quality.rawValue, $0.name) }
-    }
-
-    // MARK: - iOS's speech service (the last resort)
-
-    private func finishSpeaking() {
-        spoken?.resume()
-        spoken = nil
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeaking() }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeaking() }
     }
 }

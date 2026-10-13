@@ -26,7 +26,7 @@ struct VoicePicker: View {
             } header: {
                 Text("Voice")
             } footer: {
-                Text("Tap a voice to hear it. For more natural voices, download an Enhanced or Premium one in the iPhone's Settings › Accessibility › Spoken Content › Voices › English, then come back here.")
+                Text("Tap a voice to hear it. Apple keeps Siri\u{2019}s own voices for Siri; the most natural ones it lets apps use are the Premium voices. Download them in the iPhone\u{2019}s Settings › Accessibility › Spoken Content › Voices › English (Zoe, Ava, Jamie and Serena are good), then come back here.")
             }
         }
         .navigationTitle("Read-Aloud Voice")
