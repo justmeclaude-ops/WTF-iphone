@@ -69,6 +69,8 @@ struct AskView: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let trail {
                     ThreadTrail(threads: trail.threads) { model.askAbout($0, in: trail.id) }
+                        .background(Color(.systemBackground))
+                        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }

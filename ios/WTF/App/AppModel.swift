@@ -220,17 +220,22 @@ final class AppModel {
         guard status == nil else { return }
         tab = 0
         messages.append(ChatMessage(fromUser: true, text: "Where was I with \u{201C}\(thread.title)\u{201D}?"))
+        status = "Looking back\u{2026}"
         Task {
+            defer { status = nil; streaming = nil }
             let lines = await pipeline.lines(of: thread, in: conversation)
-            var reply = ""
-            if let left = thread.leftAt, !left.isEmpty {
-                reply = left.prefix(1).uppercased() + left.dropFirst()
-                if !".?!".contains(reply.last ?? ".") { reply += "." }
+            guard !lines.isEmpty else {
+                messages.append(ChatMessage(fromUser: false, text: "I can't find what was said about that."))
+                return
             }
-            if let recap = QuickRecap.of(lines, start: thread.start, now: Date()) {
-                reply += (reply.isEmpty ? "" : "\n\n") + recap
+            if Brain.notReadyReason == nil {
+                await answer(Prompts.thread(thread.title, leftAt: thread.leftAt, lines: lines))
+            } else {
+                // No AI: the sentences that mention it, word for word.
+                let quotes = Prompts.sentences(about: thread.title, in: lines)
+                messages.append(ChatMessage(fromUser: false, text: quotes.isEmpty ? "I can't find what was said about that."
+                    : "What was said about it:\n" + quotes.map { "\u{201C}\($0)\u{201D}" }.joined(separator: "\n")))
             }
-            messages.append(ChatMessage(fromUser: false, text: reply.isEmpty ? "I can't find what was said about that." : reply))
         }
     }
 

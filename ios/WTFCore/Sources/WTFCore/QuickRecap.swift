@@ -85,7 +85,7 @@ public enum QuickRecap {
         if anonymous {
             out = said.hasPrefix("at ") ? "At \(said.dropFirst(3)), the last thing said was:" : "Last thing said, \(said):"
         } else {
-            let who = ownerKnown ? "you" : main.who
+            let who = ownerKnown ? "you" : name(main.who)
             let verb = ownerKnown ? "were" : "was"
             out = said.hasPrefix("at ") ? "At \(said.dropFirst(3)) \(who) \(verb) saying:" : "\(who.prefix(1).uppercased() + who.dropFirst()) \(verb) saying, \(said):"
         }
@@ -93,15 +93,18 @@ public enum QuickRecap {
         if !anonymous {
             if i + 1 < turns.count {
                 let after = turns[i + 1]
-                out += "\n\nThen \(after.who) \(main.cutOff ? "cut in" : "said"): \u{201C}\(quote(after.text, max: 120))\u{201D}"
+                out += "\n\nThen \(name(after.who)) \(main.cutOff ? "cut in" : "said"): \u{201C}\(quote(after.text, max: 120))\u{201D}"
             } else if i > 0 {
                 let before = turns[i - 1]
-                out += "\n\nJust before, \(before.who) said: \u{201C}\(quote(before.text, max: 120))\u{201D}"
+                out += "\n\nJust before, \(name(before.who)) said: \u{201C}\(quote(before.text, max: 120))\u{201D}"
             }
             if !ownerKnown { out += "\n\nTap your name in a transcript and choose That\u{2019}s Me, and WTF will know which voice is yours." }
         }
         return out
     }
+
+    /// A line's speaker as said aloud: "Speech" (voices not told apart then) is just "someone".
+    static func name(_ who: String) -> String { who == Labels.anonymous ? "someone" : who }
 
     /// "just now", "40 seconds ago", "5 minutes ago", or "at 11:40".
     static func ago(_ at: Date, now: Date, calendar: Calendar) -> String {

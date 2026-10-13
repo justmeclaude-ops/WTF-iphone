@@ -188,6 +188,13 @@ final class ThreadsTests: XCTestCase {
         XCTAssertEqual(TranscriptFormat.clean("Right, #um so we need #oh, did you"), "Right, so we need did you")
     }
 
+    func testSentencesAboutATopic() {
+        let lines = "[13:16:00] Speech: Right, so we need to sort mom's birthday. It's on the 2nd of November. Did you get the MOT sorted? The garage said Thursday."
+        XCTAssertEqual(Prompts.sentences(about: "Garage appointment", in: lines), ["The garage said Thursday."])
+        XCTAssertEqual(Prompts.sentences(about: "Mom's birthday", in: lines), ["Right, so we need to sort mom's birthday."])
+        XCTAssertTrue(Prompts.thread("MOT", leftAt: nil, lines: lines).contains("remind me where I'd got to with MOT"))
+    }
+
     func testVocabulary() {
         let w = Vocabulary.words(people: ["Sarah", "You", "sarah"], items: ["Ring Dave about the van", "Buy milk at Asda"], limit: 6)
         XCTAssertEqual(w, ["Sarah", "Dave", "Asda", "Tesco", "Sainsbury's", "Aldi"])

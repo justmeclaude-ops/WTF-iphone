@@ -66,6 +66,28 @@ public enum Prompts {
         """
     }
 
+    /// "Where was I with ...?": one topic from the trail, and the talk around it.
+    public static func thread(_ title: String, leftAt: String?, lines: String) -> String {
+        """
+        In a conversation, this topic came up: \(title). What was said around then, oldest first:
+        \(tail(TranscriptFormat.compact(lines), budget: 1_200))
+        \(leftAt.flatMap { $0.isEmpty ? nil : "\nIt seems I dropped it part-way: \($0)\n" } ?? "")
+        In one or two sentences, remind me where I'd got to with \(title), and if I trailed off, what I was about \
+        to say. Only use what's above; if it barely comes up, say so.
+        """
+    }
+
+    /// The sentences in [lines] that mention [topic]'s words, for when there's no AI.
+    public static func sentences(about topic: String, in lines: String, limit: Int = 3) -> [String] {
+        let keys = keywords(topic).map { $0.hasSuffix("s") ? String($0.dropLast()) : $0 }
+        guard !keys.isEmpty else { return [] }
+        let text = TranscriptFormat.compact(lines).replacingOccurrences(of: "\n", with: " ")
+        return Rx(#"(?<=[.?!])\s+"#).split(text).filter { s in
+            let l = s.lowercased()
+            return keys.contains { l.contains($0) }
+        }.prefix(limit).map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
     /// Any other question: titles and summaries of the day, plus the best-matching transcript.
     public static func focused(question: String, notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, now: Date) -> String {
         var body = "Conversations recorded on my phone:\n"

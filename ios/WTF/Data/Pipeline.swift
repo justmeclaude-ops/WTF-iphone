@@ -156,13 +156,23 @@ actor Pipeline {
         guard let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first else { return "" }
         let cal = Calendar.current
         func secondOfDay(_ d: Date) -> Int { let x = cal.dateComponents([.hour, .minute, .second], from: d); return x.hour! * 3600 + x.minute! * 60 + x.second! }
-        let from = secondOfDay(thread.start) - 1, to = secondOfDay(thread.end) + 1
-        return c.transcript.split(separator: "\n").filter { line in
+        let from = secondOfDay(thread.start), to = secondOfDay(thread.end) + 1
+        func at(_ line: Substring) -> Int? {
             guard line.count > 9, line.hasPrefix("["), let h = Int(line.dropFirst(1).prefix(2)), let m = Int(line.dropFirst(4).prefix(2)),
-                  let s = Int(line.dropFirst(7).prefix(2)) else { return false }
-            let t = h * 3600 + m * 60 + s
-            return from <= to ? (t >= from && t <= to) : (t >= from || t <= to)
-        }.joined(separator: "\n")
+                  let s = Int(line.dropFirst(7).prefix(2)) else { return nil }
+            return h * 3600 + m * 60 + s
+        }
+        // A line covers everything until the next one starts, so a topic that began part-way
+        // through a long line includes that line.
+        let lines = c.transcript.split(separator: "\n")
+        let starts = lines.map(at)
+        var kept: [Substring] = []
+        for (i, line) in lines.enumerated() {
+            guard let t = starts[i] else { continue }
+            let next = starts[(i + 1)...].compactMap { $0 }.first ?? Int.max
+            if t < to && next > from { kept.append(line) }
+        }
+        return kept.joined(separator: "\n")
     }
 
     /// What the AI needs for any other question: the day's notes and the best-matching transcript.
