@@ -201,8 +201,8 @@ final class AppModel {
         messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
         messages.append(ChatMessage(fromUser: false, text: answer))
         guard ReadAloud.headphonesOn else { return answer }
-        await ReadAloud.shared.say(answer)
-        return "Read out in your headphones.\n\n" + answer
+        ReadAloud.shared.start(answer)
+        return answer
     }
 
     /// The answer to "what was I saying?", short enough to be read out in your ear.

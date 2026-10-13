@@ -3,7 +3,7 @@ import AppIntents
 /// "WTF?" from the Action button (or a Shortcut): without opening the app or unlocking. With
 /// AirPods or headphones in, the answer is read into your ears; otherwise it shows at the top
 /// of the screen. Either way it's waiting in Ask when you next open WTF.
-struct AskWTFIntent: AppIntent {
+struct AskWTFIntent: AudioPlaybackIntent {
     static let title: LocalizedStringResource = "Ask WTF"
     static let description = IntentDescription("What you were just on about: read aloud if AirPods are in, shown on screen if not.")
     static let openAppWhenRun = false
@@ -16,9 +16,12 @@ struct AskWTFIntent: AppIntent {
     }
 }
 
+// Both are audio-playback intents: iOS then lets them start speaking straight away from the
+// background, rather than holding the sound back until the button's pressed again.
+
 /// "What was I saying?" from the Action button, Siri or a Shortcut, without opening the app:
 /// read into your ears if AirPods or headphones are in, shown at the top of the screen if not.
-struct WhatWasISayingIntent: AppIntent {
+struct WhatWasISayingIntent: AudioPlaybackIntent {
     static let title: LocalizedStringResource = "What Was I Saying?"
     static let description = IntentDescription("What you were just on about: read into your AirPods if they're in, shown on screen if not.")
     static let openAppWhenRun = false

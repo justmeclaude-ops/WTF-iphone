@@ -22,6 +22,10 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
 
     /// Says [text] and returns once it's been said (or after 60 s at most).
     func say(_ text: String) async {
+        await say(text, voice: Self.voice, speed: Self.speed)
+    }
+
+    private func say(_ text: String, voice: AVSpeechSynthesisVoice?, speed: Double) async {
         let session = AVAudioSession.sharedInstance()
         // While listening the session can already play and record; otherwise, just play.
         if !Recorder.shared.running {
@@ -34,9 +38,8 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         }
         synthesizer.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: text.replacingOccurrences(of: "\u{2026}", with: ", "))
-        utterance.voice = Self.voice
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 1.02
-        utterance.prefersAssistiveTechnologySettings = true
+        utterance.voice = voice
+        utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(speed))
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             finished = done
             synthesizer.speak(utterance)
@@ -49,11 +52,39 @@ final class ReadAloud: NSObject, AVSpeechSynthesizerDelegate {
         Log.info("Read an answer aloud (\(text.count) characters)")
     }
 
+    /// Starts reading [text] out and returns straight away, so the answer can be shown while it's said.
+    func start(_ text: String) {
+        Task { await say(text) }
+    }
+
+    /// Settings › Read-Aloud Voice: a short sample in [voice] at [speed].
+    func sample(_ voice: AVSpeechSynthesisVoice?, speed: Double) {
+        Task { await say("You were telling them about booking the dentist for Thursday.", voice: voice, speed: speed) }
+    }
+
+    nonisolated static let voiceKey = "readAloudVoice"
+    nonisolated static let speedKey = "readAloudSpeed"
+
+    /// Your pick from Settings, or the best English voice on the phone.
+    static var voice: AVSpeechSynthesisVoice? {
+        if let id = UserDefaults.standard.string(forKey: voiceKey), let v = AVSpeechSynthesisVoice(identifier: id) { return v }
+        return defaultVoice
+    }
+
+    static var speed: Double { UserDefaults.standard.object(forKey: speedKey) as? Double ?? 1.0 }
+
     /// The best voice for the phone's English: a premium or enhanced British one if installed.
-    private static var voice: AVSpeechSynthesisVoice? {
+    static var defaultVoice: AVSpeechSynthesisVoice? {
         let language = Locale.current.identifier.hasPrefix("en_GB") || Locale.current.region?.identifier == "GB" ? "en-GB" : AVSpeechSynthesisVoice.currentLanguageCode()
         let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == language }
         return voices.max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: language)
+    }
+
+    /// Every English voice on the phone, best first; the novelty ones (Bells, Bubbles…) left out.
+    static var englishVoices: [AVSpeechSynthesisVoice] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("en") && !$0.voiceTraits.contains(.isNoveltyVoice) }
+            .sorted { ($0.quality.rawValue, $1.name) > ($1.quality.rawValue, $0.name) }
     }
 
     private func finish() {

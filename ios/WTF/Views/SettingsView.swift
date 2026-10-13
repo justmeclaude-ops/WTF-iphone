@@ -66,9 +66,14 @@ struct SettingsView: View {
                 } header: { Text("Conversations") }
 
                 Section {
-                    Text("Settings › Action Button › Shortcut › WTF › Ask WTF. Then a press tells you what you were just on about, without unlocking: read into your ears if AirPods are in, shown at the top of the screen if not.")
-                        .font(.callout)
-                } header: { Text("Action Button") }
+                    NavigationLink(value: "voice") {
+                        LabeledContent("Read-Aloud Voice", value: ReadAloud.voice?.name ?? "Default")
+                    }
+                } header: {
+                    Text("Action Button")
+                } footer: {
+                    Text("Settings › Action Button › Shortcut › WTF › What Was I Saying?. A press tells you what you were just on about, without unlocking: read into your ears if AirPods are in, shown at the top of the screen if not.")
+                }
 
                 Section {
                     NavigationLink("Diagnostics", value: "diagnostics")
@@ -85,7 +90,11 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .tint(.blue) // Settings keeps iOS's usual colours
             .navigationDestination(for: String.self) { page in
-                if page == "people" { PeopleView() } else { DiagnosticsView() }
+                switch page {
+                case "people": PeopleView()
+                case "voice": VoicePicker()
+                default: DiagnosticsView()
+                }
             }
             .task { speechReady = await SpeechEngine.shared.isReady() }
             .confirmationDialog("Delete every conversation, transcript, list item and voice?", isPresented: $confirmWipe, titleVisibility: .visible) {
