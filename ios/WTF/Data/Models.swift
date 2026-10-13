@@ -94,6 +94,11 @@ final class ActionItem {
     var place: String?
     /// The words it was heard in.
     var quote: String?
+    /// When it was said.
+    var heardAt: Date?
+    /// What to check before relying on it: "Not booked yet", "Date not certain", or a date that
+    /// doesn't add up ("You said Saturday the 1st, but…").
+    var note: String?
     /// suggested, accepted, done, dismissed
     var status: String
     var conversationID: UUID?

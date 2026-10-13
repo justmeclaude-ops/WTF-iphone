@@ -4,6 +4,9 @@ import Foundation
 public struct WhenResult: Equatable, Sendable {
     public var year: Int, month: Int, day: Int
     public var hour: Int?, minute: Int?
+    /// Set when what was said doesn't add up, e.g. "Saturday the 1st" when the 1st is a Sunday.
+    /// The date itself is kept (it's the firmer anchor); this says what to check.
+    public var doubt: String?
 
     public var allDay: Bool { hour == nil }
 
@@ -71,14 +74,44 @@ public enum WhenParser {
         q = q.replacingOccurrences(of: "a.m.", with: "am").replacingOccurrences(of: "p.m.", with: "pm").replacingOccurrences(of: "o'clock", with: "")
         q = " " + Rx(#"[,.!?]"#).replace(q, with: " ") + " "
         let today = Day(y: reference.year!, m: reference.month!, d: reference.day!)
-        guard let date = parseDate(q, today: today) else { return nil }
+        guard var date = parseDate(q, today: today) else { return nil }
+        // "Saturday the 1st": the date is the anchor; if its weekday isn't the one said, say so.
+        var doubt: String?
+        let weekday = Rx(#"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"#).first(q)
+        if let weekday {
+            let rest = Rx(#"\b(next|this|on)?\s*(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"#).replace(q, with: " ")
+            if explicitDate.test(rest), let anchored = parseDate(rest, today: today) {
+                date = anchored
+                if anchored.weekday != days[weekday[1]]! {
+                    doubt = "You said \(weekday[1].capitalized) the \(ordinal(anchored.d)), but \(anchored.d) \(monthName(anchored.m)) \(anchored.y) is a \(dayName(anchored.weekday))"
+                }
+            }
+        }
         var time = parseTime(q)
         // A bare "today at 3" that's already passed this morning is probably pm.
         if let t = time, date == today, (t.0 * 60 + t.1) < ((reference.hour ?? 0) * 60 + (reference.minute ?? 0)), t.0 < 12,
            !Rx(#"\bam\b|morning"#).test(q) {
             time = (t.0 + 12, t.1)
         }
-        return WhenResult(year: date.y, month: date.m, day: date.d, hour: time?.0, minute: time?.1)
+        return WhenResult(year: date.y, month: date.m, day: date.d, hour: time?.0, minute: time?.1, doubt: doubt)
+    }
+
+    /// A day of the month or a month named: "the 1st", "2 November", "November 2", "5/11".
+    static let explicitDate: Rx = {
+        let monthNames = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec"
+        let ords = ordinals.map(\.0).joined(separator: "|")
+        return Rx(#"\bthe\s+(\d{1,2}|(twenty[ -])?("# + ords + #"))\b|\b\d{1,2}\s+(of\s+)?("# + monthNames + #")\b|\b("# + monthNames + #")\s+\d{1,2}\b|\b\d{1,2}/\d{1,2}\b"#)
+    }()
+
+    static func ordinal(_ n: Int) -> String {
+        let suffix = (11...13).contains(n % 100) ? "th" : [1: "st", 2: "nd", 3: "rd"][n % 10] ?? "th"
+        return "\(n)\(suffix)"
+    }
+    static func monthName(_ m: Int) -> String {
+        ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][m - 1]
+    }
+    static func dayName(_ weekday: Int) -> String {
+        ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][weekday - 1]
     }
 
     public static func parse(_ phrase: String, reference: Date, calendar: Calendar = .current) -> WhenResult? {

@@ -6,7 +6,7 @@ import WTFCore
 struct ConversationNotes {
     @Guide(description: "A short, specific title for the conversation, at most 6 words")
     var title: String
-    @Guide(description: "2 to 5 short points: what was talked about, decided, or left unfinished")
+    @Guide(description: "2 to 5 short points: what was decided, what was only suggested or still needs doing, and what was left unfinished. Keep each detail with what it was about")
     var points: [String]
 }
 
@@ -18,13 +18,15 @@ struct Appointment {
     var when: String
     @Guide(description: "Where, or empty if not said")
     var place: String
+    @Guide(description: "true only if it was said to be booked, arranged or confirmed; false if it was only suggested or still needs booking or confirming")
+    var booked: Bool
 }
 
 @Generable
 struct FoundActions {
     @Guide(description: "Groceries or household things to buy from a shop, one item each, e.g. Milk, AA batteries. Not meals out or takeaways")
     var buy: [String]
-    @Guide(description: "Things the speaker said they would do, as short tasks, e.g. Ring the landlord")
+    @Guide(description: "Things the speaker said they would do, as short tasks, e.g. Ring the landlord. Include confirming or booking any plan that isn't settled yet, e.g. Ring the garage to confirm the MOT")
     var todo: [String]
     @Guide(description: "Appointments or plans with a day or a time actually said, e.g. MOT at the garage, Thursday 9am")
     var appointments: [Appointment]

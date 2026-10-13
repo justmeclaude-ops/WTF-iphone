@@ -11,9 +11,16 @@ public struct ExtractedAction: Equatable, Sendable {
     public var place: String?
     /// [whenText] resolved against when the conversation happened; nil if unclear.
     public var resolved: WhenResult?
+    /// What to check before relying on it: "Not booked yet", "Date not certain", or a date
+    /// that doesn't add up. Nil when it was said plainly.
+    public var note: String?
+    /// The transcript line it was heard in ("[14:09:12] You: …"), to show where it came from.
+    public var source: String?
 
-    public init(type: ActionType, title: String, whenText: String? = nil, place: String? = nil, resolved: WhenResult? = nil) {
+    public init(type: ActionType, title: String, whenText: String? = nil, place: String? = nil, resolved: WhenResult? = nil,
+                note: String? = nil, source: String? = nil) {
         self.type = type; self.title = title; self.whenText = whenText; self.place = place; self.resolved = resolved
+        self.note = note; self.source = source
     }
 }
 
@@ -29,7 +36,7 @@ public enum ActionRules {
         #"the \d{1,2}(st|nd|rd|th))\b"#)
     static let buyCues = Rx(
         #"\b(buy|bought|get (some|more|a|an|the)|pick up|picking up|grab|need (some|more)|run(ning)? out|ran out|"# +
-        #"out of|shopping|groceries|supermarket|tesco|sainsbury'?s|asda|aldi|lidl|we'?ve got no|there'?s no)\b"#)
+        #"needs? (new|some|more)|out of|shopping|groceries|supermarket|tesco|sainsbury'?s|asda|aldi|lidl|we'?ve got no|there'?s no)\b"#)
     static let todoCues = Rx(
         #"\b(i'?ll|i will|i need to|i have to|i must|i've got to|i gotta|remind me|don'?t forget|"# +
         #"remember to|i should|i'm going to|i promised)\b"#)
@@ -49,12 +56,15 @@ public enum ActionRules {
     }
 
     static let item = #"([a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,2}(?:(?:\s*,\s*|\s+and\s+)[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,2})*)"#
-    static let itemEnd = #"(?=\s+(?:for|on|from|at|when|tomorrow|today|tonight|later|please|too|as well|again|on the way|if|because|so)\b|[.,!?]|$)"#
+    static let itemEnd = #"(?=\s+(?:for|on|by|from|at|when|tomorrow|today|tonight|later|please|too|as well|again|on the way|if|because|so)\b|[.,!?]|$)"#
     static let buyRules = [
         Rx(#"\b(?:pick up|picking up|buy|grab|get|order)\s+(?:some|more|a few|a couple of|a|an|the|new)\s+"# + item + itemEnd),
         Rx(#"\b(?:buy|grab|pick up)\s+"# + item + itemEnd),
         Rx(#"\b(?:run(?:ning)? out of|ran out of|out of|we've got no|we have no|there's no)\s+"# + item + itemEnd),
         Rx(#"\bneed (?:some|more)\s+"# + item + itemEnd),
+        // "we need batteries for the remote", "the remote needs new batteries"
+        Rx(#"\b(?:we|i) need (?:new |a new |an? )?(?!to\b)"# + item + itemEnd),
+        Rx(#"\bneeds (?:new |some |more |a new )\s*"# + item + itemEnd),
     ]
     static let notItems: Set<String> = [
         "it", "that", "this", "them", "those", "these", "one", "ones", "something", "anything", "time", "way", "back",
@@ -71,7 +81,7 @@ public enum ActionRules {
     static let vagueTask = Rx(#"^\w+\s+(it|that|this|them|one)(\s+\w+)?$"#)
     static let eventNoun = Rx(
         #"\b(?:([a-z]+'s) )?(appointment|dentist|dental|doctor|gp|vet|interview|meeting|party|birthday|wedding|anniversary|"# +
-        #"dinner|lunch|drinks|deadline|flight|match|gig|check-up|checkup|game night|parents' evening)\b"#)
+        #"dinner|lunch|drinks|deadline|flight|match|gig|check-up|checkup|game night|parents' evening|mot|service)\b"#)
     static let agreed = Rx(#"\b(works|perfect|booked|see you|confirmed|that's fine|sounds good|great|lovely|yes|yeah)\b"#)
     static let bogusEventTitle = Rx(#"^(discuss|discussing|talk|talking|chat|conversation|meeting for .* link)"#)
     static let vagueWhen = Rx(#"any ?time|unspecified|not (specified|said|given)|unknown|^\s*(nothing|none|n/?a|later|soon|sometime|some time|eventually)\s*$"#)
@@ -81,6 +91,45 @@ public enum ActionRules {
     static let buyTodo = Rx(
         #"^(?:buy|get|grab|pick up|pick-up|order)\s+(?:some\s+|more\s+|a\s+|an\s+|the\s+|new\s+)?(.+?)"# +
         #"(?:\s+(?:tomorrow|today|tonight|later|on the way.*|from .*|at the .*|for (?:the|a) .*|when .*))?$"#)
+    static let whoToRing = Rx(#"\bthe (garage|dentist|doctors?|surgery|vet|school|landlord|bank|council|restaurant|pub|hotel|plumber|builder|electrician|salon|hairdresser'?s?)\b"#)
+
+    /// "Ring them to confirm" said about the garage and the MOT -> "Ring the garage to confirm the MOT".
+    static func specific(_ task: String, in line: String) -> String {
+        var out = task
+        if let who = whoToRing.first(line) {
+            out = Rx(#"^((?:ring|call|phone|text|email|ask|tell) )(them|him|her)\b"#).replace(out, with: "$1the " + who[1])
+        }
+        if Rx(#"\bto (confirm|check|book)$"#).test(out), let noun = eventNoun.first(line) {
+            let thing = noun[2].count <= 3 ? noun[2].uppercased() : noun[2]
+            out += " the " + thing
+        }
+        return out
+    }
+
+    /// A plan that isn't settled: suggested, or still to be booked or confirmed.
+    static let unsettled = Rx(
+        #"\b(need to (ring|call|phone|confirm|check|book)|(ring|call|phone) (them|the \w+) to|to confirm|confirm (it|that|with)|"# +
+        #"haven'?t (booked|confirmed)|not booked|not confirmed|should we|shall we|how about|what about|maybe|might|"# +
+        #"could (we|do|book)|pencil|provisional|i'?ll (ring|call|check|book)|if (it'?s|that'?s|they'?re) (free|ok|okay|open))\b"#)
+    static let settled = Rx(#"\b((it'?s|is|all|i'?ve|we'?ve|got it|now) (booked|confirmed|sorted)|booked it|confirmed it|see you then)\b"#)
+
+    /// The note for a plan heard in [said] (and the talk just after it): a date that doesn't add
+    /// up, a date asked about rather than said, or a plan not yet booked.
+    public static func planNote(_ resolved: WhenResult?, said: String, around: String) -> String? {
+        if let doubt = resolved?.doubt { return doubt }
+        if said.trimmingCharacters(in: .whitespaces).hasSuffix("?") { return "Date not certain" }
+        if unsettled.test(around) && !settled.test(around) { return "Not booked yet" }
+        return nil
+    }
+
+    /// The line in [lines] that [title] most likely came from: the one sharing most of its words.
+    public static func sourceLine(_ title: String, in lines: [String]) -> String? {
+        let want = words(title)
+        guard !want.isEmpty else { return nil }
+        let best = lines.map { ($0, words(text($0)).intersection(want).count) }.max { $0.1 < $1.1 }
+        return best.flatMap { $0.1 > 0 ? $0.0 : nil }
+    }
+
     static let notShopping = Rx(#"\b(card|present|gift|tickets?|appointment|room|table)\b"#)
 
     static func text(_ line: String) -> String {
@@ -107,15 +156,16 @@ public enum ActionRules {
     /// to go on, every line counts.
     public static func ruleActions(_ lines: [String], conversationStart: Date, title: String?, calendar: Calendar = .current, youOnly: Bool = true) -> [ExtractedAction] {
         var out: [ExtractedAction] = []
-        for line in lines {
+        for (index, line) in lines.enumerated() {
             let t = text(line)
+            let next = index + 1 < lines.count ? text(lines[index + 1]) : ""
             // Clause by clause, so "go to the pub and then get some milk" still finds the milk.
             for clause in clauses.split(t) where !eatingOut.test(clause) {
                 for rule in buyRules {
                     for m in rule.all(clause) {
                         for it in splitItems(m[1]) where it.count >= 2 && it.count <= 40 &&
                             !it.split(separator: " ").contains(where: { notItems.contains($0.lowercased()) }) {
-                            out.append(ExtractedAction(type: .buy, title: capitalised(it)))
+                            out.append(ExtractedAction(type: .buy, title: capitalised(it), source: line))
                         }
                     }
                 }
@@ -127,8 +177,9 @@ public enum ActionRules {
                 if let v = Rx(#"^([A-Z][a-z]+),"#, caseSensitive: true).first(t) {
                     task = Rx(#"\byou\b"#, caseSensitive: true).replace(task, with: v[1])
                 }
+                task = specific(task, in: t)
                 if !buyRules.contains(where: { $0.test("I'll " + task) }) && !vagueTask.test(task) {
-                    out.append(ExtractedAction(type: .todo, title: capitalised(task)))
+                    out.append(ExtractedAction(type: .todo, title: capitalised(task), source: line))
                 }
             }
             // Sentence by sentence: the date that goes with "dentist" is in its own sentence or
@@ -150,11 +201,13 @@ public enum ActionRules {
                 guard let (said, resolved) = candidates.lazy.compactMap({ c in
                     WhenParser.parse(c, reference: conversationStart, calendar: calendar).map { (c, $0) }
                 }).first else { continue }
+                let dateSentence = sentences.first { $0.contains(said) || said.contains($0) } ?? sentence
+                let note = planNote(resolved, said: dateSentence, around: sentences[i...].joined(separator: " ") + " " + next)
                 if let noun {
                     let name = (noun[1] + " " + noun[2]).trimmingCharacters(in: .whitespaces)
-                    out.append(ExtractedAction(type: .event, title: capitalised(name), whenText: said, resolved: resolved))
+                    out.append(ExtractedAction(type: .event, title: capitalised(name), whenText: said, resolved: resolved, note: note, source: line))
                 } else if let title, resolved.hour != nil, agreed.test(sentence) {
-                    out.append(ExtractedAction(type: .event, title: title, whenText: said, resolved: resolved))
+                    out.append(ExtractedAction(type: .event, title: title, whenText: said, resolved: resolved, note: note, source: line))
                 }
             }
         }
@@ -162,8 +215,10 @@ public enum ActionRules {
     }
 
     /// The AI's findings, tidied: shopping filed as a task becomes shopping; lists split up.
-    public static func fromModel(buy: [String], todo: [String], events: [(what: String, when: String?, place: String?)],
-                                 conversationStart: Date, calendar: Calendar = .current) -> [ExtractedAction] {
+    /// [booked]: the AI's view that the plan was booked or confirmed, not just suggested. [lines]:
+    /// what it read, to find where each item came from.
+    public static func fromModel(buy: [String], todo: [String], events: [(what: String, when: String?, place: String?, booked: Bool)],
+                                 conversationStart: Date, lines: [String] = [], calendar: Calendar = .current) -> [ExtractedAction] {
         var out: [ExtractedAction] = []
         for b in buy { for it in splitItems(b) { out.append(ExtractedAction(type: .buy, title: String(capitalised(it).prefix(60)))) } }
         for t in todo {
@@ -179,10 +234,19 @@ public enum ActionRules {
             // Only real plans: a day or a time actually said ("Thursday at 3"), not "later" or "nothing".
             guard let whenText = e.when.flatMap({ $0.isEmpty ? nil : $0 }), !vagueWhen.test(whenText.lowercased()),
                   let resolved = WhenParser.parse(whenText, reference: conversationStart, calendar: calendar) else { continue }
+            let source = sourceLine(e.what + " " + whenText, in: lines)
+            var note = resolved.doubt
+            if note == nil, let source {
+                let i = lines.firstIndex(of: source)!
+                let around = text(source) + " " + (i + 1 < lines.count ? text(lines[i + 1]) : "")
+                note = planNote(resolved, said: whenText, around: around)
+            }
+            if note == nil, !e.booked { note = "Not booked yet" }
             out.append(ExtractedAction(
                 type: .event, title: String(capitalised(e.what).prefix(80)), whenText: whenText,
-                place: e.place.flatMap { $0.isEmpty ? nil : $0 }, resolved: resolved))
+                place: e.place.flatMap { $0.isEmpty ? nil : $0 }, resolved: resolved, note: note, source: source))
         }
+        for i in out.indices where out[i].source == nil { out[i].source = sourceLine(out[i].title, in: lines) }
         return out
     }
 
@@ -194,6 +258,9 @@ public enum ActionRules {
             return x
         }.filter { !stop.contains($0) })
     }
+
+    /// How many words two pieces of text share.
+    public static func overlap(_ a: String, _ b: String) -> Int { words(a).intersection(words(b)).count }
 
     /// Mostly the same words: "Milk" and "some milk", "Send Tom the link" and "send the link to Tom".
     public static func similar(_ a: String, _ b: String) -> Bool {
@@ -208,6 +275,10 @@ public enum ActionRules {
             !(a.type == .event && (bogusEventTitle.test(a.title) || (a.whenText.map(vagueWhen.test) ?? false)))
         }
         for r in rules {
+            if let i = kept.firstIndex(where: { $0.type == r.type && similar($0.title, r.title) }) {
+                if kept[i].source == nil { kept[i].source = r.source }
+                if r.resolved?.doubt != nil { kept[i].note = r.note }
+            }
             let dup = kept.contains { k in
                 if k.type == .event && r.type == .event {
                     let sameDay = k.resolved.map { [$0.year, $0.month, $0.day] } == r.resolved.map { [$0.year, $0.month, $0.day] } && k.resolved != nil

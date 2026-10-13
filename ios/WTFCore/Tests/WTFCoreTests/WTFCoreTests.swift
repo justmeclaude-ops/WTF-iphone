@@ -45,6 +45,17 @@ final class WhenParserTests: XCTestCase {
         XCTAssertNil(t(p("the 24th")))
     }
 
+    func testAWeekdayThatDoesntMatchTheDateIsFlagged() {
+        // 1 November 2026 is a Sunday: the date's kept, the mismatch is pointed out.
+        let r = p("Saturday the 1st at 7pm")
+        XCTAssertEqual(d(r), [2026, 11, 1])
+        XCTAssertEqual(t(r), [19, 0])
+        XCTAssertEqual(r?.doubt, "You said Saturday the 1st, but 1 November 2026 is a Sunday")
+        XCTAssertNil(p("Sunday the 1st")?.doubt)
+        XCTAssertEqual(d(p("Sunday the 1st")), [2026, 11, 1])
+        XCTAssertNil(p("Thursday at 9am")?.doubt)
+    }
+
     func testNothingToResolve() {
         XCTAssertNil(p("sometime soon"))
         XCTAssertNil(p("whenever"))
@@ -87,13 +98,42 @@ final class ActionRulesTests: XCTestCase {
 
     func testTheAIsShoppingFiledAsATaskBecomesShopping() {
         let model = ActionRules.fromModel(buy: ["eggs and butter"], todo: ["Pick up milk and bread tomorrow", "Text Sam the address"],
-                                          events: [("Vet appointment for Rex", "Tuesday at 4", nil)], conversationStart: start, calendar: cal)
+                                          events: [("Vet appointment for Rex", "Tuesday at 4", nil, true)], conversationStart: start, calendar: cal)
         XCTAssertEqual(Set(model.filter { $0.type == .buy }.map(\.title)), ["Eggs", "Butter", "Milk", "Bread"])
         XCTAssertEqual(model.filter { $0.type == .todo }.map(\.title), ["Text Sam the address"])
         XCTAssertEqual(model.first { $0.type == .event }?.resolved.map { [$0.day, $0.hour ?? -1] }, [13, 16])
         let merged = ActionRules.merge(model, [ExtractedAction(type: .buy, title: "Milk"), ExtractedAction(type: .buy, title: "Cheese")])
         XCTAssertEqual(merged.filter { $0.title == "Milk" }.count, 1)
         XCTAssertTrue(merged.contains { $0.title == "Cheese" })
+    }
+}
+
+final class PlanNoteTests: XCTestCase {
+    var cal: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "Europe/London")!; return c }
+    var start: Date { cal.date(from: DateComponents(year: 2026, month: 10, day: 11, hour: 15, minute: 0))! }
+
+    func testProposedPlansAndQuestionedDatesAreMarked() {
+        let t = """
+            [14:05:00] You: So for mum's birthday, how about the back room at the Crown, Saturday the 1st at 7?
+            [14:05:09] Speaker 2: Could do. We'd need to ring them to check it's free.
+            [14:06:00] Speaker 2: The garage said the MOT could be Thursday at 9am, but I need to ring them to confirm.
+            [14:07:00] You: What about your dentist? Isn't that next Tuesday at half three?
+            [14:08:00] You: The remote needs new batteries by the way.
+            [14:09:00] You: The vet appointment is booked for Friday at 4, all confirmed.
+            """
+        let found = ActionRules.ruleActions(ActionRules.candidateLines(t), conversationStart: start, title: nil, calendar: cal, youOnly: false)
+        let events = Dictionary(found.filter { $0.type == .event }.map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(events["Mum's birthday"]?.note, "You said Saturday the 1st, but 1 November 2026 is a Sunday", "\(events)")
+        XCTAssertEqual(events["Dentist"]?.note, "Date not certain", "\(events)")
+        XCTAssertNil(events["Vet"]?.note, "\(events)")
+        XCTAssertTrue(found.contains { $0.type == .buy && $0.title.lowercased() == "batteries" }, "\(found)")
+        XCTAssertTrue(found.allSatisfy { $0.source != nil })
+        XCTAssertTrue(found.contains { $0.type == .todo && $0.title == "Ring the garage to confirm the MOT" }, "\(found)")
+        XCTAssertEqual(events["MOT"]?.note, "Not booked yet", "\(events)")
+        let model = ActionRules.fromModel(buy: [], todo: [], events: [("MOT", "Thursday 9am", "the garage", false)],
+                                          conversationStart: start, lines: ActionRules.candidateLines(t), calendar: cal)
+        XCTAssertEqual(model.first?.note, "Not booked yet")
+        XCTAssertTrue(model.first?.source?.contains("garage") ?? false)
     }
 }
 

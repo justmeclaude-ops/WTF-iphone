@@ -150,7 +150,14 @@ struct SuggestionRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title).font(.headline)
                 if let d = detail(item) { Text(d).font(.subheadline).foregroundStyle(.secondary) }
-                if let quote = item.quote { Text("\u{201C}\(quote)\u{201D}").font(.footnote).foregroundStyle(.tertiary).lineLimit(2) }
+                if let note = item.note { NoteBadge(note: note) }
+                if let quote = item.quote {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let at = item.heardAt { Text("From your conversation \(heardWhen(at))").font(.caption).foregroundStyle(.secondary) }
+                        Text("\u{201C}\(quote)\u{201D}").font(.footnote).italic().foregroundStyle(.secondary).lineLimit(3)
+                    }
+                    .padding(.top, 2)
+                }
                 HStack {
                     Button(item.type == "EVENT" ? "Add to Calendar" : "Add", action: onAccept).buttonStyle(.bordered)
                     Button("Not Now", action: onDismiss).buttonStyle(.borderless).foregroundStyle(.secondary)
@@ -183,9 +190,34 @@ struct CheckRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).foregroundStyle(ticking ? .secondary : .primary)
                 if let d = detail(item) { Text(d).font(.footnote).foregroundStyle(.secondary) }
+                if let note = item.note, item.type == "EVENT" { NoteBadge(note: note) }
             }
         }
     }
+}
+
+/// "Not booked yet", "Date not certain", "You said Saturday the 1st, but…": in black and white,
+/// set apart by its outline rather than colour.
+struct NoteBadge: View {
+    let note: String
+
+    var body: some View {
+        Label(note, systemImage: note == "Not booked yet" ? "hourglass" : "exclamationmark.circle")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .overlay(Capsule().strokeBorder(.secondary, lineWidth: 1))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// "at 2:09 pm", or "on Monday at 2:09 pm" if it wasn't today.
+func heardWhen(_ date: Date) -> String {
+    let time = date.formatted(date: .omitted, time: .shortened)
+    if Calendar.current.isDateInToday(date) { return "at \(time)" }
+    if Calendar.current.isDateInYesterday(date) { return "yesterday at \(time)" }
+    return "on \(date.formatted(.dateTime.weekday(.wide))) at \(time)"
 }
 
 /// The system's "New Event" sheet, filled in. Since iOS 17 it needs no calendar permission.
@@ -202,7 +234,10 @@ struct EventEditor: UIViewControllerRepresentable {
         event.endDate = item.allDay ? start : start.addingTimeInterval(3600)
         event.isAllDay = item.allDay
         event.location = item.place
-        if let quote = item.quote { event.notes = "Heard by WTF: \u{201C}\(quote)\u{201D}" }
+        var notes: [String] = []
+        if let note = item.note { notes.append(note + ".") }
+        if let quote = item.quote { notes.append("Heard by WTF: \u{201C}\(quote)\u{201D}") }
+        if !notes.isEmpty { event.notes = notes.joined(separator: "\n") }
         let vc = EKEventEditViewController()
         vc.eventStore = store
         vc.event = event

@@ -411,7 +411,7 @@ actor Pipeline {
             else { throw StepTimedOut(what: "finding list items") }
             let fromModel = ActionRules.fromModel(
                 buy: found.buy, todo: found.todo,
-                events: found.appointments.map { ($0.what, $0.when, $0.place) }, conversationStart: c.start)
+                events: found.appointments.map { ($0.what, $0.when, $0.place, $0.booked) }, conversationStart: c.start, lines: recent)
             await suggest(for: c, found: ActionRules.merge(fromModel, ruleActions(c)))
         } catch {
             // Too long, or the model declined: keep the conversation, untitled.
@@ -434,8 +434,12 @@ actor Pipeline {
             fresh.append(a)
         }
         for a in fresh {
-            modelContext.insert(ActionItem(type: a.type.rawValue, title: a.title, start: a.resolved?.start(),
-                                           allDay: a.resolved?.allDay ?? false, place: a.place, quote: a.whenText, conversationID: cid))
+            let heard = a.source.map { Self.heard($0, about: a, on: c.start) }
+            let item = ActionItem(type: a.type.rawValue, title: a.title, start: a.resolved?.start(),
+                                  allDay: a.resolved?.allDay ?? false, place: a.place, quote: heard?.quote ?? a.whenText, conversationID: cid)
+            item.heardAt = heard?.at
+            item.note = a.note
+            modelContext.insert(item)
         }
         try? modelContext.save()
         guard !fresh.isEmpty else { return }
@@ -443,6 +447,24 @@ actor Pipeline {
         content.title = "WTF heard \(fresh.count) thing\(fresh.count == 1 ? "" : "s") to act on"
         content.body = fresh.prefix(3).map(\.title).joined(separator: ", ")
         try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+}
+
+extension Pipeline {
+    /// Where a list item came from: the sentence of its line that says it, and when that was.
+    nonisolated static func heard(_ line: String, about a: ExtractedAction, on day: Date) -> (quote: String, at: Date?) {
+        let text = line.components(separatedBy: ": ").dropFirst().joined(separator: ": ")
+        let sentences = text.split(whereSeparator: { ".?!".contains($0) }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let key = a.title + " " + (a.whenText ?? "")
+        let best = sentences.max { ActionRules.overlap(key, $0) < ActionRules.overlap(key, $1) } ?? text
+        var quote = best
+        if let end = text.range(of: best)?.upperBound, end < text.endIndex, ".?!".contains(text[end]) { quote.append(text[end]) }
+        if quote.count > 160 { quote = String(quote.prefix(157)) + "\u{2026}" }
+        var at: Date?
+        if let m = Rx(#"^\[(\d\d):(\d\d):(\d\d)\]"#).first(line) {
+            at = Calendar.current.date(bySettingHour: Int(m[1])!, minute: Int(m[2])!, second: Int(m[3])!, of: day)
+        }
+        return (quote, at)
     }
 }
 

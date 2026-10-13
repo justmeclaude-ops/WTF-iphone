@@ -115,7 +115,9 @@ public enum Prompts {
 
     /// For summarising: the conversation as compact as it goes, cut to fit.
     public static func summary(transcript: String) -> String {
-        "Summarise this conversation from my day.\n\n" + tail(TranscriptFormat.compact(transcript), budget: 2_400)
+        "Summarise this conversation from my day. Say what was decided and what was only suggested or still needs doing " +
+            "(a plan that has to be confirmed isn't booked). Keep each detail with what it was about: don't connect things " +
+            "that weren't connected (if batteries are for the remote, they aren't for a present).\n\n" + tail(TranscriptFormat.compact(transcript), budget: 2_400)
     }
 
     /// For finding things to act on.
@@ -124,7 +126,8 @@ public enum Prompts {
         return """
             Lines from a conversation recorded on \(f.string(from: conversationStart)). Find appointments (with when they are, \
             in the words used), things to buy (one per item), and things the speaker said they would do. Be strict: an \
-            appointment needs a day or a time actually said; things to buy are shopping (groceries, household things), not \
+            appointment needs a day or a time actually said, and say whether it was actually booked or only suggested; if it \
+            still has to be booked or confirmed, add that as something to do; things to buy are shopping (groceries, household things), not \
             meals out or takeaways; a film, a show or a topic mentioned in passing is none of these. Only what was actually \
             said; leave a list empty if there's nothing for it.
 

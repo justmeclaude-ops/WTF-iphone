@@ -169,8 +169,8 @@ final class ThreadsTests: XCTestCase {
     func testEatingOutAndVaguePlansArentListItems() {
         let lines = ["[12:50:00] Speaker 1: I want to go and grab some Chinese food from a restaurant later."]
         XCTAssertTrue(ActionRules.ruleActions(lines, conversationStart: Date(), title: nil, youOnly: false).filter { $0.type == .buy }.isEmpty)
-        let model = ActionRules.fromModel(buy: [], todo: [], events: [("Samurai", "Nothing", nil), ("Chinese food", "Later", "Restaurant"),
-                                                                     ("Dentist", "Thursday at 3", nil)], conversationStart: Date())
+        let model = ActionRules.fromModel(buy: [], todo: [], events: [("Samurai", "Nothing", nil, false), ("Chinese food", "Later", "Restaurant", false),
+                                                                     ("Dentist", "Thursday at 3", nil, true)], conversationStart: Date())
         XCTAssertEqual(model.map(\.title), ["Dentist"])
     }
 
