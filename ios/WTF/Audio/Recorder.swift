@@ -19,7 +19,10 @@ final class Recorder: @unchecked Sendable {
     /// The mic stopped by itself (a call took it, or the audio system restarted and it couldn't resume).
     var onStopped: (() -> Void)?
 
-    private let engine = AVAudioEngine()
+    /// A new one for every start (see freshEngine). Swapped only with [sessionLock] held, and
+    /// under [infoLock] too, for [stalled] to read from anywhere.
+    private var engine = AVAudioEngine()
+    private var engineObserver: NSObjectProtocol?
     private let queue = DispatchQueue(label: "wtf.recorder")
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
@@ -61,9 +64,12 @@ final class Recorder: @unchecked Sendable {
             self.queue.async { self.closeChunk(cut: false) }
             self.resume(why: "after an interruption")
         }
-        center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+        // iOS restarted its sound system (it's rare): the audio's all made again, and listening carries on.
+        center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: nil) { [weak self] _ in
             guard let self, self.running else { return }
-            self.resume(why: "after the audio route changed")
+            Log.info("iOS restarted its sound system")
+            self.queue.async { self.closeChunk(cut: false) }
+            self.resume(why: "after iOS restarted its sound system")
         }
     }
 
@@ -85,19 +91,32 @@ final class Recorder: @unchecked Sendable {
         sessionLock.lock(); defer { sessionLock.unlock() }
         guard !running else { return }
         SpeechGate.shared.start()
-        try configureSession()
-        try installTap()
+        do {
+            try configureSession()
+            freshEngine()
+            try installTap()
+        } catch {
+            // Nothing left half-started, and the microphone let go, so it isn't shown as in use.
+            engine.stop()
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            throw error
+        }
         running = true
     }
 
-    /// Lets go of the audio session after a start that didn't get going, so the microphone
-    /// isn't shown as in use with WTF not listening.
-    func release() {
-        sessionLock.lock(); defer { sessionLock.unlock() }
-        guard !running else { return }
-        engine.inputNode.removeTap(onBus: 0)
+    /// A new engine, made once iOS has given WTF the microphone. One made while it couldn't have
+    /// it (in the background, say), or left over from a start that failed, can be stuck unable to
+    /// record until WTF's closed, so none is kept from one start to the next. With [sessionLock] held.
+    private func freshEngine() {
         engine.stop()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        let new = AVAudioEngine()
+        let center = NotificationCenter.default
+        if let engineObserver { center.removeObserver(engineObserver) }
+        engineObserver = center.addObserver(forName: .AVAudioEngineConfigurationChange, object: new, queue: nil) { [weak self] _ in
+            guard let self, self.running else { return }
+            self.resume(why: "after the audio route changed")
+        }
+        infoLock.lock(); engine = new; infoLock.unlock()
     }
 
     /// Settings › Use AirPods Microphone.
@@ -180,7 +199,10 @@ final class Recorder: @unchecked Sendable {
     }
 
     /// Listening is on, but the mic isn't actually running (iOS didn't say the interruption ended).
-    var stalled: Bool { running && !engine.isRunning }
+    var stalled: Bool {
+        infoLock.lock(); defer { infoLock.unlock() }
+        return running && !engine.isRunning
+    }
 
     /// Starts the mic again after something took it. Safe to call any time listening is on.
     func resume(why: String) {
@@ -207,11 +229,13 @@ final class Recorder: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         do {
-            // AirPods put in or taken out: the right microphone for the new route.
+            // AirPods put in or taken out: the right microphone for the new route, on a new engine.
             try configureSession()
+            freshEngine()
             try installTap()
         } catch {
             running = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             onStopped?()
             throw error
         }
@@ -219,15 +243,17 @@ final class Recorder: @unchecked Sendable {
 
     private func installTap() throws {
         let input = engine.inputNode
-        input.removeTap(onBus: 0) // one left by a start that failed after it was put on
-        var format = input.outputFormat(forBus: 0)
         // Mid-switch (AirPods going in or out) the microphone can briefly have no format at all:
-        // a tap then would crash, so wait a moment for it.
-        for _ in 0..<10 where format.sampleRate == 0 || format.channelCount == 0 {
+        // a tap then would crash, so wait a moment for it. The hardware's format is what says.
+        var hardware = input.inputFormat(forBus: 0)
+        for _ in 0..<10 where !Self.usable(hardware) {
             Thread.sleep(forTimeInterval: 0.1)
-            format = input.outputFormat(forBus: 0)
+            hardware = input.inputFormat(forBus: 0)
         }
-        guard format.sampleRate > 0, format.channelCount > 0 else { throw NoMicrophone() }
+        guard Self.usable(hardware) else { throw NoMicrophone() }
+        // A tap at any other rate than the hardware's crashes.
+        let given = input.outputFormat(forBus: 0)
+        let format = Self.usable(given) && given.sampleRate == hardware.sampleRate ? given : hardware
         converter = AVAudioConverter(from: format, to: target)
         // A tenth of a second at a time: few wake-ups, all day.
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate / 10), format: format) { [weak self] buffer, _ in
@@ -236,8 +262,15 @@ final class Recorder: @unchecked Sendable {
             self.queue.async { self.consume(samples, at: heard) }
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
     }
+
+    private static func usable(_ format: AVAudioFormat) -> Bool { format.sampleRate > 0 && format.channelCount > 0 }
 
     private func resample(_ buffer: AVAudioPCMBuffer) -> [Float]? {
         guard let converter else { return nil }

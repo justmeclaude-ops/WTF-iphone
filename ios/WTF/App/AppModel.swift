@@ -150,17 +150,22 @@ final class AppModel {
             Log.error("Couldn't start listening", error)
             ListeningActivity.shared.stop()
             await LiveTranscriber.shared.stop()
-            Recorder.shared.stop()
-            Recorder.shared.release()
             if !microphone {
                 problem = "Couldn't start listening: \(error.localizedDescription)"
-            } else if UIApplication.shared.applicationState == .active {
-                problem = "Couldn\u{2019}t switch the microphone on: something else may be using it. Try again in a moment."
+            } else if UIApplication.shared.applicationState != .background {
+                problem = "Couldn\u{2019}t switch the microphone on: \(Self.why(error)). Try again in a moment."
             } else {
                 problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
             }
             return false
         }
+    }
+
+    /// What iOS said when the microphone wouldn't come on, in a few plain words.
+    private static func why(_ error: Error) -> String {
+        if error is NoMicrophone { return "it wasn\u{2019}t ready" }
+        let e = error as NSError
+        return MicTrouble.reason(e.code) ?? "iOS said no (\(e.code))"
     }
 
     /// The microphone on, with a few quick tries: from the Lock Screen or the Action button, iOS
@@ -185,30 +190,17 @@ final class AppModel {
     /// from the background. True if WTF's now in front.
     typealias ComeForward = @MainActor () async -> Bool
 
-    /// Listening on, from the Action button or a Shortcut, without opening the app if it can. If
-    /// iOS won't let WTF switch the microphone on from the background (it usually won't: only
-    /// Apple's own apps can count on that), [forward] brings WTF forward, where it always can, and
-    /// it starts there instead. One quick check first, so that's straight away, not after seconds
-    /// of tries and a Lock Screen card started and stopped for nothing.
+    /// Listening on, from the Action button or a Shortcut. iOS doesn't let apps other than its own
+    /// switch the microphone on from the background, so from there [forward] brings WTF forward
+    /// first and it starts there: nothing's tried in the background, where a try only fails, and
+    /// with WTF already open it just starts. Without [forward] (a control) it tries where it is.
     func startListeningFromShortcut(forward: ComeForward? = nil) async -> Bool {
-        if let forward, UIApplication.shared.applicationState != .active, !Recorder.shared.running {
-            // One try at the microphone itself (not just the audio session) before anything else
-            // starts, so a no leaves nothing half-started: no Lock Screen card, no microphone in use.
-            do {
-                try Recorder.shared.start()
-                Log.info("iOS let WTF switch the microphone on from the background")
-            } catch {
-                Log.error("iOS won't let WTF switch the microphone on from the background", error)
-                Recorder.shared.release()
-                guard await forward() else {
-                    problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
-                    return false
-                }
-                return await startListening()
+        if let forward, UIApplication.shared.applicationState == .background, !Recorder.shared.running {
+            guard await forward() else {
+                problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
+                return false
             }
         }
-        if await startListening() { return true }
-        guard let forward, await forward() else { return false }
         return await startListening()
     }
 

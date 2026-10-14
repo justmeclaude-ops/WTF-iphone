@@ -194,6 +194,16 @@ final class RecapAndRulesTests: XCTestCase {
         XCTAssertEqual(TranscriptFormat.clean("\"Hello there.\" Hello there. Bye."), "Hello there. Bye.")
     }
 
+    func testMicTroubleReadsIOSCodes() {
+        // As iOS reports them: "Session activation failed" from the background is 561015905.
+        XCTAssertEqual(MicTrouble.code("!pla"), 561_015_905)
+        XCTAssertEqual(MicTrouble.code("!rec"), 561_145_187)
+        XCTAssertEqual(MicTrouble.code("!pri"), 561_017_449)
+        XCTAssertEqual(MicTrouble.reason(561_017_449), "a call or another app is using it")
+        XCTAssertEqual(MicTrouble.reason(561_015_905), "iOS wouldn\u{2019}t allow it just then")
+        XCTAssertNil(MicTrouble.reason(-10875))
+    }
+
     func testVadHearsSpeechOverQuiet() {
         var vad = EnergyVad()
         let quiet = [Float](repeating: 0.001, count: 480)

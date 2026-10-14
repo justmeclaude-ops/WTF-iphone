@@ -45,3 +45,20 @@ public struct EnergyVad: Sendable {
 
     public mutating func isSpeech(_ samples: [Float]) -> Bool { samples.withUnsafeBufferPointer { isSpeech($0) } }
 }
+
+/// Why iOS wouldn't let the microphone come on, in a few plain words, from its error code (iOS's
+/// audio errors are four letters packed into a number). Nil for one it doesn't say much about.
+public enum MicTrouble {
+    public static func code(_ letters: String) -> Int { letters.utf8.reduce(0) { $0 << 8 | Int($1) } }
+
+    public static func reason(_ code: Int) -> String? {
+        switch code {
+        case Self.code("!pri"): return "a call or another app is using it"
+        case Self.code("siri"): return "Siri is listening"
+        case Self.code("!rec"), Self.code("!pla"), Self.code("!int"): return "iOS wouldn\u{2019}t allow it just then"
+        case Self.code("msrv"): return "the iPhone\u{2019}s sound system was restarting"
+        case Self.code("!act"): return "the iPhone\u{2019}s sound was busy"
+        default: return nil
+        }
+    }
+}

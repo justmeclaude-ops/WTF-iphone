@@ -132,14 +132,14 @@ struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityInt
 }
 
 extension AppIntent {
-    /// iOS wouldn't let WTF switch the microphone on from the background: bring WTF forward,
-    /// where it always can (after unlocking, if the iPhone's locked). For intents with
-    /// `.foreground(.dynamic)` in their supported modes. True if WTF's now in front.
+    /// iOS won't let WTF switch the microphone on from the background: bring WTF forward, where
+    /// it can (after unlocking, if the iPhone's locked). For intents with `.foreground(.dynamic)`
+    /// in their supported modes. True if WTF's now in front.
     @MainActor
     func comeForward() async -> Bool {
         let mode = systemContext.currentMode
         guard mode == .background, mode.canContinueInForeground else {
-            Log.info("Listening didn't start, and WTF can't come forward from here")
+            Log.info("WTF can't come forward from here to start listening")
             return false
         }
         do {
