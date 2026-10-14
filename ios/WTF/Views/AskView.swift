@@ -72,10 +72,12 @@ struct AskView: View {
                         }
                         Color.clear.frame(height: 1).id("bottom")
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                     .animation(.snappy, value: model.messages)
                 }
-                .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.top, for: .alignment)
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: model.messages.count) { withAnimation { proxy.scrollTo("bottom") } }
                 .onChange(of: (model.streaming?.count ?? 0) / 60) { proxy.scrollTo("bottom") }
@@ -98,26 +100,30 @@ struct AskView: View {
     }
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Lost the thread? Ask about anything you've said or heard while WTF was listening.")
-                .font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Lost the thread?").font(.title2.bold())
+                Text("Ask about anything you've said or heard while WTF was listening.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 4)
             VStack(spacing: 0) {
                 ForEach(suggestions, id: \.self) { q in
                     Button { model.ask(q) } label: {
-                        HStack {
+                        HStack(spacing: 12) {
                             Image(systemName: "sparkles").foregroundStyle(.secondary)
-                            Text(q).foregroundStyle(.primary)
-                            Spacer()
+                            Text(q).foregroundStyle(.primary).multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
                         }
-                        .padding(.vertical, 12).padding(.horizontal, 14)
+                        .padding(.vertical, 14).padding(.horizontal, 16)
                         .contentShape(Rectangle())
                     }
-                    if q != suggestions.last { Divider().padding(.leading, 44) }
+                    if q != suggestions.last { Divider().padding(.leading, 48) }
                 }
             }
-            .background(.background.secondary, in: .rect(cornerRadius: 14))
+            .background(.background.secondary, in: .rect(cornerRadius: 18))
         }
-        .padding(.top, 8)
+        .padding(.top, 16)
     }
 
     private var inputBar: some View {
@@ -136,7 +142,7 @@ struct AskView: View {
                     .buttonBorderShape(.capsule)
                     .controlSize(.small)
                     .tint(.primary)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                 }
                 .onScrollPhaseChange { _, phase in
                     if phase != .idle { TabSwipe.sidewaysScrollUntil = Date().addingTimeInterval(0.6) }
@@ -148,25 +154,30 @@ struct AskView: View {
         .animation(.snappy, value: typing && input.isEmpty)
     }
 
+    private var canSend: Bool { !input.trimmingCharacters(in: .whitespaces).isEmpty && model.status == nil }
+
     private var field: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 6) {
             TextField("Ask about anything you heard", text: $input, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($typing)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .glassEffect(in: .rect(cornerRadius: 20))
+                .padding(.leading, 16).padding(.vertical, 12)
                 .onChange(of: typing) { if typing { Brain.prewarm() } }
                 .onSubmit(send)
             Button(action: send) {
-                Image(systemName: "arrow.up").font(.body.bold())
-                    .frame(width: 36, height: 36)
+                Image(systemName: "arrow.up")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Color(.systemBackground))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(canSend ? Color.primary : Color.secondary.opacity(0.35)))
             }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
-            .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty || model.status != nil)
+            .disabled(!canSend)
+            .accessibilityLabel("Ask")
+            .padding(.trailing, 6).padding(.bottom, 6)
             .sensoryFeedback(.impact(weight: .light), trigger: model.messages.count)
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .glassEffect(in: .rect(cornerRadius: 22))
+        .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 14)
     }
 
     /// A new day, or an hour since the last message: shown with its day and time, like Messages.
