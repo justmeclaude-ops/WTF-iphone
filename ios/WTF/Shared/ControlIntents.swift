@@ -49,3 +49,19 @@ struct WTFListControlIntent: LiveActivityIntent, AudioPlaybackIntent {
         return .result()
     }
 }
+
+/// What came before that: a step further back each time (the topic left hanging, then the one
+/// before). Like "previous track" on the music controls.
+struct WTFBeforeControlIntent: LiveActivityIntent, AudioPlaybackIntent {
+    static let title: LocalizedStringResource = "What Came Before That?"
+    static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+    static let isDiscoverable = false
+
+    func perform() async throws -> some IntentResult {
+        #if !WIDGET
+        _ = await AppModel.shared.beforeThatFromShortcut()
+        #endif
+        return .result()
+    }
+}

@@ -52,21 +52,31 @@ struct ListControl: ControlWidget {
     }
 }
 
-/// The two buttons on the Lock Screen card: the answer, and a pause.
-struct CardButtons: View {
+/// The controls when you hold the listening pill (and on the Lock Screen card), laid out like
+/// music's: back a step, what was I saying, stop. Each works without opening WTF.
+struct PillControls: View {
     var body: some View {
-        HStack(spacing: 8) {
-            Button(intent: WTFAskControlIntent()) {
-                Label("What was I saying?", systemImage: "questionmark.bubble")
-                    .frame(maxWidth: .infinity)
-            }
-            Button(intent: WTFListeningControlIntent()) {
-                Label("Pause", systemImage: "pause.fill")
-            }
+        HStack(alignment: .top, spacing: 0) {
+            control(WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that", size: 46)
+            control(WTFAskControlIntent(), icon: "questionmark", label: "What was I saying?", size: 58)
+            control(WTFListeningControlIntent(), icon: "stop.fill", label: "Stop", size: 46)
         }
-        .font(.caption.weight(.semibold))
-        .buttonStyle(.bordered)
-        .tint(.white)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func control<I: AppIntent>(_ intent: I, icon: String, label: String, size: CGFloat) -> some View {
+        Button(intent: intent) {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: size * 0.38, weight: .semibold))
+                    .frame(width: size, height: size)
+                    .background(Circle().fill(Color.white.opacity(0.16)))
+                Text(label).font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -93,7 +103,7 @@ struct ListeningLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
                         if s.trail.count > 1 { Trail(steps: s.trail) }
-                        CardButtons()
+                        PillControls().padding(.top, 2)
                     }
                 }
             } compactLeading: {
@@ -148,7 +158,7 @@ struct LockScreenCard: View {
                         .multilineTextAlignment(.trailing).frame(maxWidth: 72)
                 }
                 if state.trail.count > 1 { Trail(steps: state.trail) }
-                CardButtons()
+                PillControls()
             }
             .padding(16)
         }
