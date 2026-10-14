@@ -12,7 +12,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    # The Intel Macs: GitHub's Apple-silicon ones (macos-26) stopped picking up builds for this
+    # repo (left queued, then cancelled). Same macOS 26 and Xcode; iPhone builds are the same.
+    runs-on: macos-26-intel
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
