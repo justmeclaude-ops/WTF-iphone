@@ -61,8 +61,13 @@ public enum Prompts {
     public static let instructions = """
         You are WTF, a memory aid for someone who goes off on tangents and loses their train of thought. \
         Their phone records their day and transcribes it. In transcripts, lines marked "You" are theirs; other \
-        voices are numbered ("Speaker 2") or named. Answer briefly and plainly, talk to them as "you", \
-        and use only the notes you're given; if they don't answer the question, say so.
+        voices are numbered ("Speaker 2") or named. Answer straight away, with no lead-in like "Sure" or \
+        "Here's a summary", briefly and plainly, and talk to them as "you". Call people by their names if you \
+        know them, otherwise "the other person" or "someone"; never write "Speaker 1" or "Speaker 2". \
+        Use only what you're given, exactly as it was said: add nothing, don't assume anything was booked, \
+        decided or agreed unless someone said so, and keep numbers as they were said ("turned five" is an \
+        age, not a date). If what you're given doesn't answer the question, say so. Don't mention the current \
+        date or time unless asked.
         """
 
     /// "What was I just on about?": only the last few minutes of the latest conversation.
@@ -71,7 +76,7 @@ public enum Prompts {
         \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first; the last line is the most recent:
         \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 900 : 700))
 
-        It is now \(clock(now)). In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \
+        (It's \(clock(now)) now.) In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \
         unfinished, say what I was in the middle of saying. Only say I was interrupted if someone else spoke after me.
         My question: \(question)
         """
@@ -83,7 +88,7 @@ public enum Prompts {
         \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), oldest first; the last line is the most recent:
         \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 700 : 550))
         \(leftAt.map { "\nEarlier, I dropped a topic part-way: \($0)\n" } ?? "")
-        It is now \(clock(now)). In one or two short sentences that will be read aloud to me, say what I was just \
+        (It's \(clock(now)) now.) In one or two short sentences that will be read aloud to me, say what I was just \
         talking about and, if I trailed off, what I was in the middle of saying. No lists, no quotation marks.
         """
     }
@@ -112,13 +117,35 @@ public enum Prompts {
 
     /// Any other question: titles and summaries of the day, plus the best-matching transcript.
     public static func focused(question: String, notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, now: Date, background: String = "") -> String {
-        var body = background + "Conversations recorded on my phone:\n"
+        var body = background + (notes.count == 1 ? "The conversation:\n" : "Conversations recorded on my phone:\n")
         for n in notes.prefix(12) {
             body += "- \(n.label): \(n.title ?? "untitled")" + (n.summary.map { "\n  " + $0.replacingOccurrences(of: "\n", with: "\n  ") } ?? "") + "\n"
         }
         if let best { body += "\nFrom the transcript of \(best.label):\n" + tail(TranscriptFormat.compact(best.transcript), budget: background.isEmpty ? 1_600 : 1_300) + "\n" }
-        return body + "\nIt is now \(clock(now)). Answer my question in 2 to 4 short sentences, saying which conversation (its time) you mean.\nMy question: \(question)"
+        let which = notes.count > 1 ? ", saying which conversation (its time) you mean" : ""
+        return body + "\n(It's \(clock(now)) now.) Answer my question in 2 to 4 short sentences\(which).\nMy question: \(question)"
     }
+
+    /// An answer as the user should see (or hear) it: without the lead-in small models add
+    /// ("Okay, so here's a summary of the conversation."), and without them telling the time back
+    /// ("It is now Wednesday, 2:06pm.").
+    public static func tidy(_ answer: String) -> String {
+        var t = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        var before = ""
+        while before != t {
+            before = t
+            t = leadIn.replace(t, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        t = tellingTheTime.replace(t, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        t = Rx(#"\n{3,}"#).replace(t, with: "\n\n")
+        guard let first = t.first, first.isLowercase else { return t }
+        return first.uppercased() + t.dropFirst()
+    }
+    static let leadIn = Rx(
+        #"^(?:(?:sure|okay|ok|alright|all right|certainly|of course|absolutely|got it)\b[,!.]?\s*(?:so\b,?\s*)?|"# +
+        #"(?:here'?s|here is|this is)\s+(?:a|an|the|your|my)?\s*(?:quick|short|brief)?\s*(?:summary|recap|rundown|overview|answer)\b[^:\n]*?(?::|\.(?=\s|$))\s*|"# +
+        #"(?:based on|according to|looking at)\s+(?:the|your|my)\s+(?:notes|transcripts?|conversations?)\b[^,\n]*,\s*)"#)
+    static let tellingTheTime = Rx(#"(?:^|(?<=[.!?\n]))\s*(?:it'?s|it is)\s+(?:now|currently)\s+(?:about\s+|around\s+|just\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[:.]\d\d|\d{1,2}\s*(?:am|pm)|(?:the\s+)?\d{1,2}(?:st|nd|rd|th))[^.!?\n]*[.!?]?"#)
 
     /// Keywords for finding the right conversation.
     public static func keywords(_ question: String) -> [String] {
@@ -148,11 +175,12 @@ public enum Prompts {
         let said = tail(lines.joined(separator: "\n"), budget: background.isEmpty ? 1_800 : 1_400)
         return background + """
             Lines from a conversation recorded on \(f.string(from: conversationStart)). Find appointments (with when they are, \
-            in the words used), things to buy (one per item), and things the speaker said they would do. Be strict: an \
-            appointment needs a day or a time actually said, and say whether it was actually booked or only suggested; if it \
-            still has to be booked or confirmed, add that as something to do; things to buy are shopping (groceries, household things), not \
-            meals out or takeaways; a film, a show or a topic mentioned in passing is none of these. Only what was actually \
-            said; leave a list empty if there's nothing for it.
+            in the words used), things to buy (one per item), and things someone said they would do. Be strict: an \
+            appointment needs a day or a time actually said for it (never assume today), and say whether it was actually \
+            booked or only suggested; things to buy are shopping (groceries, household things), not meals out or \
+            takeaways, and never people ("pick up Ezra from school" is collecting him, not shopping); a film, a show or a \
+            topic mentioned in passing is none of these. Only what was actually said, in its words: add no tasks of your \
+            own; leave a list empty if there's nothing for it.
 
             \(said)
             """

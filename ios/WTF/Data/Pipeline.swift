@@ -305,6 +305,47 @@ actor Pipeline {
         try? modelContext.save()
     }
 
+    /// Once: what earlier versions got wrong, put right. The "[1]" a correction left at the start
+    /// of some lines, and list suggestions that weren't: someone being picked up filed as
+    /// shopping, today's plans with no time as calendar items, "not booked yet" on things nobody
+    /// books, and tasks nobody said. (What you've already added to a list is left alone.)
+    func repairOnce() {
+        let key = "repaired.lists.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        defer { UserDefaults.standard.set(true, forKey: key) }
+        let conversations = (try? modelContext.fetch(FetchDescriptor<Conversation>())) ?? []
+        var lines: [UUID: [String]] = [:]
+        for c in conversations {
+            let fixed = Corrections.repaired(c.transcript)
+            if fixed != c.transcript { c.transcript = fixed }
+            lines[c.id] = ActionRules.candidateLines(fixed)
+        }
+        let suggested = (try? modelContext.fetch(FetchDescriptor<ActionItem>(predicate: #Predicate { $0.status == "suggested" }))) ?? []
+        var removed = 0
+        for item in suggested {
+            if let q = item.quote { item.quote = Rx(#"^\s*\[\s*\d+\s*\]\s*"#).replace(q, with: "") }
+            let said = item.conversationID.flatMap { lines[$0] } ?? []
+            var wrong = false
+            switch item.type {
+            case ActionType.buy.rawValue:
+                wrong = ActionRules.isCollecting(item.title, in: [item.quote ?? ""] + said)
+            case ActionType.todo.rawValue:
+                wrong = !said.isEmpty && !ActionRules.grounded(item.title, in: said)
+            case ActionType.event.rawValue:
+                if let start = item.start, item.allDay, Calendar.current.isDate(start, inSameDayAs: item.heardAt ?? item.created) { wrong = true }
+                if item.note == "Not booked yet", !ActionRules.isBookable(item.title + " " + (item.quote ?? "")) { item.note = nil }
+            default:
+                break
+            }
+            if wrong {
+                modelContext.delete(item)
+                removed += 1
+            }
+        }
+        try? modelContext.save()
+        if removed > 0 { Log.info("Took \(removed) wrong suggestion\(removed == 1 ? "" : "s") off the lists") }
+    }
+
     func deleteEverything() {
         wiped += 1
         toFollow = []

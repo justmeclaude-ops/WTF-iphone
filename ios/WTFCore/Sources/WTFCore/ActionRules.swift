@@ -55,7 +55,9 @@ public enum ActionRules {
         return keep.sorted().map { lines[$0] }
     }
 
-    static let item = #"([a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,2}(?:(?:\s*,\s*|\s+and\s+)[a-z][a-z'-]*(?:\s+[a-z][a-z'-]*){0,2})*)"#
+    /// A word of an item: not one that ends it ("milk from Tesco" is milk).
+    static let itemWord = #"(?!(?:for|on|by|from|at|when|tomorrow|today|tonight|later|please|too|again|if|because|so|then)\b)[a-z][a-z'-]*"#
+    static let item = "(" + itemWord + #"(?:\s+"# + itemWord + #"){0,2}(?:(?:\s*,\s*|\s+and\s+)"# + itemWord + #"(?:\s+"# + itemWord + "){0,2})*)"
     static let itemEnd = #"(?=\s+(?:for|on|by|from|at|when|tomorrow|today|tonight|later|please|too|as well|again|on the way|if|because|so)\b|[.,!?]|$)"#
     static let buyRules = [
         Rx(#"\b(?:pick up|picking up|buy|grab|get|order)\s+(?:some|more|a few|a couple of|a|an|the|new)\s+"# + item + itemEnd),
@@ -74,7 +76,14 @@ public enum ActionRules {
         "answer", "answers", "question", "look", "feel", "feeling", "sense", "job", "word", "view", "result", "reply",
         "response", "point", "problem", "picture", "grip", "hold", "kick", "laugh", "glimpse", "shot", "start", "break",
         "rest", "deal", "go", "say", "clue", "grade", "score", "good", "great", "bad", "better", "best", "worse", "worst",
+        // People you pick up or grab aren't shopping: "pick up the kids", "grab my mum".
+        "kids", "kid", "children", "child", "son", "daughter", "mum", "mom", "dad", "nan", "nana", "gran", "grandma", "grandad",
+        "granddad", "baby", "friend", "friends", "boys", "girls", "wife", "husband", "partner", "brother", "sister", "family",
+        "people", "guys", "lads", "everyone", "everybody",
     ]
+    /// Collecting someone, not buying something: "pick up Ezra from school", "collect the kids from nursery".
+    static let collecting = Rx(#"\b(?:pick|picking|collect|collecting|fetch|fetching)\b.{0,40}\bfrom (?:school|nursery|pre-?school|college|uni|university|work|the station|the airport|practice|training|football|swimming|club|cubs|scouts|brownies|ballet|the party|(?:his|her|their|your|my) (?:mum|mom|dad|nan|gran|grandma|grandad|friend)'?s?)\b"#)
+
     static let todoRule = Rx(
         #"\b(?:i'?ll|i will|i need to|i have to|i've got to|i must|remind me to|don'?t forget to|remember to|i'm going to|i promised to)\s+(.{4,80}?)\s*(?:[.!?]|$)"#)
     /// "get it sorted", "do that", "sort this out": no idea what the task actually is.
@@ -112,14 +121,59 @@ public enum ActionRules {
         #"haven'?t (booked|confirmed)|not booked|not confirmed|should we|shall we|how about|what about|maybe|might|"# +
         #"could (we|do|book)|pencil|provisional|i'?ll (ring|call|check|book)|if (it'?s|that'?s|they'?re) (free|ok|okay|open))\b"#)
     static let settled = Rx(#"\b((it'?s|is|all|i'?ve|we'?ve|got it|now) (booked|confirmed|sorted)|booked it|confirmed it|see you then)\b"#)
+    /// Things that get booked: only these can be "Not booked yet" (picking someone up can't).
+    static let bookable = Rx(
+        #"\b(appointment|dentist|dental|doctor'?s?|gp|vet|hospital|clinic|interview|meeting|reservation|table|booking|book|booked|"# +
+        #"tickets?|flight|train|coach|hotel|mot|service|haircut|hairdresser'?s?|barber'?s?|salon|massage|nails|class|lesson|session|"# +
+        #"check-?up|restaurant|venue|room|party|tour)\b"#)
 
     /// The note for a plan heard in [said] (and the talk just after it): a date that doesn't add
-    /// up, a date asked about rather than said, or a plan not yet booked.
-    public static func planNote(_ resolved: WhenResult?, said: String, around: String) -> String? {
+    /// up, a date asked about rather than said, or a plan not yet booked, if [thing] (the plan,
+    /// as said) is the kind of thing that gets booked.
+    public static func planNote(_ resolved: WhenResult?, said: String, around: String, thing: String? = nil) -> String? {
         if let doubt = resolved?.doubt { return doubt }
         if said.trimmingCharacters(in: .whitespaces).hasSuffix("?") { return "Date not certain" }
-        if unsettled.test(around) && !settled.test(around) { return "Not booked yet" }
+        if unsettled.test(around) && !settled.test(around) && bookable.test(thing ?? around) { return "Not booked yet" }
         return nil
+    }
+
+    /// Whether most of [item]'s words were actually said in [lines]: the AI's finds are kept only
+    /// if so ("Confirm McDonald's details" when all that was said was "go to McDonald's" isn't).
+    public static func grounded(_ item: String, in lines: [String], share: Double = 0.5) -> Bool {
+        let want = words(item)
+        guard !want.isEmpty else { return false }
+        let heard = lines.reduce(into: Set<String>()) { $0.formUnion(words(said($1))) }
+        return Double(want.intersection(heard).count) / Double(want.count) >= share
+    }
+
+    /// Whether [item] is someone being collected in [lines] ("pick up Ezra from school", "grab
+    /// the kids"), not something to buy: it comes straight after "pick up" (or "collect"), and
+    /// it's a name, a person, or being fetched from somewhere like school.
+    public static func isCollecting(_ item: String, in lines: [String]) -> Bool {
+        guard let first = item.split(separator: " ").first.map({ String($0).lowercased() }) else { return false }
+        let after = Rx(#"\b(?:pick(?:ing)?\s+up|collect(?:ing)?|fetch(?:ing)?|grab(?:bing)?)\s+(?:the\s+|my\s+|your\s+|his\s+|her\s+|our\s+|their\s+)?"# +
+                       NSRegularExpression.escapedPattern(for: first) + #"\b"#)
+        return lines.contains { line in
+            let t = said(line)
+            return after.test(t) && (item.first?.isUppercase == true || notItems.contains(first) || collecting.test(t))
+        }
+    }
+
+    /// A transcript line's words ("[14:04:10] Speaker 1: Right, so…" → "Right, so…"), or the line
+    /// as it is if it's just words.
+    static func said(_ line: String) -> String {
+        let t = text(line)
+        return t.isEmpty ? line : t
+    }
+
+    /// Whether [plan] is the kind of thing that gets booked (so can be "Not booked yet").
+    public static func isBookable(_ plan: String) -> Bool { bookable.test(plan) }
+
+    /// A plan for the day it was heard, with no time said ("we're going to McDonald's",
+    /// "it's his birthday today"): happening already, not one for the calendar.
+    static func happeningToday(_ resolved: WhenResult, conversationStart: Date, calendar: Calendar) -> Bool {
+        let d = calendar.dateComponents([.year, .month, .day], from: conversationStart)
+        return resolved.allDay && resolved.year == d.year && resolved.month == d.month && resolved.day == d.day
     }
 
     /// The line in [lines] that [title] most likely came from: the one sharing most of its words.
@@ -160,9 +214,11 @@ public enum ActionRules {
             let t = text(line)
             let next = index + 1 < lines.count ? text(lines[index + 1]) : ""
             // Clause by clause, so "go to the pub and then get some milk" still finds the milk.
-            for clause in clauses.split(t) where !eatingOut.test(clause) {
-                for rule in buyRules {
+            for clause in clauses.split(t) where !eatingOut.test(clause) && !collecting.test(clause) {
+                for (r, rule) in buyRules.enumerated() {
                     for m in rule.all(clause) {
+                        // "pick up Ezra": a name with no "some" or "the" before it is someone.
+                        if r == 1, isCollecting(m[1], in: [clause]) { continue }
                         for it in splitItems(m[1]) where it.count >= 2 && it.count <= 40 &&
                             !it.split(separator: " ").contains(where: { notItems.contains($0.lowercased()) }) {
                             out.append(ExtractedAction(type: .buy, title: capitalised(it), source: line))
@@ -201,8 +257,10 @@ public enum ActionRules {
                 guard let (said, resolved) = candidates.lazy.compactMap({ c in
                     WhenParser.parse(c, reference: conversationStart, calendar: calendar).map { (c, $0) }
                 }).first else { continue }
+                // "He turned five today": happening already, not one for the calendar.
+                if happeningToday(resolved, conversationStart: conversationStart, calendar: calendar) { continue }
                 let dateSentence = sentences.first { $0.contains(said) || said.contains($0) } ?? sentence
-                let note = planNote(resolved, said: dateSentence, around: sentences[i...].joined(separator: " ") + " " + next)
+                let note = planNote(resolved, said: dateSentence, around: sentences[i...].joined(separator: " ") + " " + next, thing: sentence)
                 if let noun {
                     let name = (noun[1] + " " + noun[2]).trimmingCharacters(in: .whitespaces)
                     out.append(ExtractedAction(type: .event, title: capitalised(name), whenText: said, resolved: resolved, note: note, source: line))
@@ -220,12 +278,18 @@ public enum ActionRules {
     public static func fromModel(buy: [String], todo: [String], events: [(what: String, when: String?, place: String?, booked: Bool)],
                                  conversationStart: Date, lines: [String] = [], calendar: Calendar = .current) -> [ExtractedAction] {
         var out: [ExtractedAction] = []
-        for b in buy { for it in splitItems(b) { out.append(ExtractedAction(type: .buy, title: String(capitalised(it).prefix(60)))) } }
+        // With the lines it read, everything it found is checked against them: small models
+        // add things of their own ("Confirm McDonald's details"), and "pick up Ezra" isn't shopping.
+        let checking = !lines.isEmpty
+        func buyable(_ it: String) -> Bool {
+            !checking || (grounded(it, in: lines) && !isCollecting(it, in: lines))
+        }
+        for b in buy { for it in splitItems(b) where buyable(it) { out.append(ExtractedAction(type: .buy, title: String(capitalised(it).prefix(60)))) } }
         for t in todo {
             let task = t.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !task.isEmpty else { continue }
+            guard !task.isEmpty, !checking || grounded(task, in: lines) else { continue }
             if let m = buyTodo.whole(task), !notShopping.test(task) {
-                for it in splitItems(m[1]) { out.append(ExtractedAction(type: .buy, title: String(capitalised(it).prefix(60)))) }
+                for it in splitItems(m[1]) where buyable(it) { out.append(ExtractedAction(type: .buy, title: String(capitalised(it).prefix(60)))) }
             } else {
                 out.append(ExtractedAction(type: .todo, title: String(capitalised(task).prefix(100))))
             }
@@ -234,14 +298,27 @@ public enum ActionRules {
             // Only real plans: a day or a time actually said ("Thursday at 3"), not "later" or "nothing".
             guard let whenText = e.when.flatMap({ $0.isEmpty ? nil : $0 }), !vagueWhen.test(whenText.lowercased()),
                   let resolved = WhenParser.parse(whenText, reference: conversationStart, calendar: calendar) else { continue }
+            // Today with no time: it's happening, not something to put in the calendar.
+            if happeningToday(resolved, conversationStart: conversationStart, calendar: calendar) { continue }
+            // The day (or time) has to have been said about it, not assumed: in the line that
+            // mentions it, or the one after.
+            if checking {
+                let near = lines.indices.filter { overlap(e.what, said(lines[$0])) > 0 }.flatMap { [$0, $0 + 1] }.filter { $0 < lines.count }
+                let sameDay = near.contains { i in
+                    guard let r = WhenParser.parse(said(lines[i]), reference: conversationStart, calendar: calendar) else { return false }
+                    return r.year == resolved.year && r.month == resolved.month && r.day == resolved.day
+                }
+                guard sameDay else { continue }
+            }
             let source = sourceLine(e.what + " " + whenText, in: lines)
             var note = resolved.doubt
+            let thing = e.what + " " + (source.map(said) ?? "")
             if note == nil, let source {
                 let i = lines.firstIndex(of: source)!
-                let around = text(source) + " " + (i + 1 < lines.count ? text(lines[i + 1]) : "")
-                note = planNote(resolved, said: whenText, around: around)
+                let around = said(source) + " " + (i + 1 < lines.count ? said(lines[i + 1]) : "")
+                note = planNote(resolved, said: whenText, around: around, thing: thing)
             }
-            if note == nil, !e.booked { note = "Not booked yet" }
+            if note == nil, !e.booked, bookable.test(thing) { note = "Not booked yet" }
             out.append(ExtractedAction(
                 type: .event, title: String(capitalised(e.what).prefix(80)), whenText: whenText,
                 place: e.place.flatMap { $0.isEmpty ? nil : $0 }, resolved: resolved, note: note, source: source))
@@ -280,6 +357,7 @@ public enum ActionRules {
                 if r.resolved?.doubt != nil { kept[i].note = r.note }
             }
             let dup = kept.contains { k in
+                if r.type == .buy, k.type != .buy, k.source != nil, k.source == r.source, overlap(k.title, r.title) > 0 { return true }
                 if k.type == .event && r.type == .event {
                     let sameDay = k.resolved.map { [$0.year, $0.month, $0.day] } == r.resolved.map { [$0.year, $0.month, $0.day] } && k.resolved != nil
                     return sameDay || similar(k.title, r.title)

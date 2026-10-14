@@ -24,11 +24,11 @@ struct Appointment {
 
 @Generable
 struct FoundActions {
-    @Guide(description: "Groceries or household things to buy from a shop, one item each, e.g. Milk, AA batteries. Not meals out or takeaways")
+    @Guide(description: "Groceries or household things someone said to buy from a shop, one item each, e.g. Milk, AA batteries. Not meals out or takeaways, and never people: picking someone up isn't shopping")
     var buy: [String]
-    @Guide(description: "Things the speaker said they would do, as short tasks, e.g. Ring the landlord. Include confirming or booking any plan that isn't settled yet, e.g. Ring the garage to confirm the MOT")
+    @Guide(description: "Things someone actually said they would do, as short tasks in their words, e.g. Ring the landlord. Add none of your own")
     var todo: [String]
-    @Guide(description: "Appointments or plans with a day or a time actually said, e.g. MOT at the garage, Thursday 9am")
+    @Guide(description: "Appointments or plans with a day or a time actually said for them, e.g. MOT at the garage, Thursday 9am. Never assume today")
     var appointments: [Appointment]
 }
 
@@ -56,7 +56,7 @@ struct TopicStep {
 struct MemoryNotes {
     @Guide(description: "Who is in the conversation and who they seem to be, e.g. Speaker 2: probably Sarah, organising the party")
     var people: [String]
-    @Guide(description: "What was agreed or settled")
+    @Guide(description: "What was agreed or settled, only if someone actually said so")
     var decided: [String]
     @Guide(description: "Ideas or plans put forward but not settled")
     var suggested: [String]
@@ -76,6 +76,10 @@ struct LastingFacts {
 
 /// Apple Intelligence's on-device model: summaries, list items and answers, free and private.
 enum Brain {
+    /// For answers: the likeliest words, so the same question gets the same answer, without
+    /// the inventiveness that adds things nobody said.
+    static let steady = GenerationOptions(sampling: nil, temperature: 0.2)
+
     /// It's summarising what people said, so it shouldn't refuse because someone swore.
     static var model: SystemLanguageModel { SystemLanguageModel(guardrails: .permissiveContentTransformations) }
 
@@ -138,15 +142,19 @@ enum Brain {
 
     /// "Your Day": a few sentences on a whole day, from its conversations' notes (Prompts.day).
     static func day(_ prompt: String) async throws -> String {
-        let session = LanguageModelSession(model: model, instructions: "You look back over someone's day for them, from notes on their conversations, in a few plain sentences.")
-        return try await session.respond(to: prompt).content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let session = LanguageModelSession(model: model, instructions: "You look back over someone's day for them, from notes on their conversations, in a few plain sentences. Start with the recap itself, and use only what's in the notes.")
+        let response = try await session.respond(to: prompt, options: steady)
+        return Prompts.tidy(response.content)
     }
 
     /// A short answer to read aloud, given up on after [seconds].
     static func quick(_ prompt: String, seconds: Double) async -> String? {
         await withDeadline(seconds) {
             let session = LanguageModelSession(model: model, instructions: Prompts.instructions)
-            return await Log.attempt("Spoken answer") { try await session.respond(to: prompt).content }
+            return await Log.attempt("Spoken answer") {
+                let response = try await session.respond(to: prompt, options: steady)
+                return Prompts.tidy(response.content)
+            }
         }
     }
 
@@ -156,7 +164,7 @@ enum Brain {
             let task = Task {
                 do {
                     let session = LanguageModelSession(model: model, instructions: Prompts.instructions)
-                    for try await partial in session.streamResponse(to: prompt) {
+                    for try await partial in session.streamResponse(to: prompt, options: steady) {
                         continuation.yield(partial.content)
                     }
                     continuation.finish()

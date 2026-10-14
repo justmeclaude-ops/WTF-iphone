@@ -52,6 +52,7 @@ final class AppModel {
         container = try! ModelContainer(for: Chunk.self, Conversation.self, ActionItem.self, Person.self, Fact.self)
         pipeline = Pipeline(modelContainer: container)
         let pipeline = pipeline
+        Task { await pipeline.repairOnce() }
         Recorder.shared.onChunk = { url, start, end in
             Task {
                 await pipeline.addChunk(url: url, start: start, end: end)
@@ -451,11 +452,11 @@ final class AppModel {
         var text = ""
         do {
             for try await soFar in Brain.ask(prompt) {
-                text = soFar
-                streaming = soFar
+                text = Prompts.tidy(soFar)
+                streaming = text
             }
             streaming = nil
-            add(ChatMessage(fromUser: false, text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            add(ChatMessage(fromUser: false, text: text))
         } catch {
             Log.error("Apple Intelligence couldn't answer", error)
             streaming = nil

@@ -42,7 +42,7 @@ public enum Corrections {
     public static func apply(_ corrected: [String], to original: [String], protected: Set<String> = []) -> [String] {
         original.enumerated().map { i, line in
             guard i < corrected.count else { return line }
-            let fixed = Rx(#"^\s*\d+[.)]\s*"#).replace(corrected[i], with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let fixed = unnumbered(corrected[i], number: i + 1)
             guard accept(fixed, for: text(of: line), protected: protected) else { return line }
             return prefix(of: line) + fixed
         }
@@ -84,6 +84,26 @@ public enum Corrections {
             }
         }
         return row[b.count]
+    }
+
+    /// The line without the number the AI was given it under ([number]), however it wrote it
+    /// back: "1. Right", "1) Right", "[1] Right", "(1) Right", "1: Right" all give "Right". Only
+    /// that number, and not a time: line 10 saying "10:30 works" keeps its 10:30.
+    public static func unnumbered(_ line: String, number: Int) -> String {
+        let n = String(number)
+        let numbering = Rx(#"^\s*(?:\[\s*"# + n + #"\s*\]|\(\s*"# + n + #"\s*\)|"# + n + #"\s*(?:[)\]-]|[.:](?!\d)))\s*"#)
+        return numbering.replace(line, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A transcript with the "[1] " a correction once left at the start of a line's words taken
+    /// out again ("[14:04:10] Speaker 1: [1] Right, so…" → "[14:04:10] Speaker 1: Right, so…").
+    public static func repaired(_ transcript: String) -> String {
+        transcript.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let l = String(line)
+            let words = text(of: l)
+            guard words != l, let m = Rx(#"^\[\s*\d+\s*\]\s*"#).first(words) else { return l }
+            return prefix(of: l) + String(words.dropFirst(m[0].count))
+        }.joined(separator: "\n")
     }
 
     /// "[13:16:00] Speaker 1: " and the words after it.

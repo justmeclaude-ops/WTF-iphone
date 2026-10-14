@@ -229,7 +229,7 @@ struct BubbleShape: Shape {
     let tail: Bool
 
     func path(in r: CGRect) -> Path {
-        var p = Path(roundedRect: r, cornerRadius: 18, style: .continuous)
+        let p = Path(roundedRect: r, cornerRadius: 18, style: .continuous)
         guard tail else { return p }
         let x = fromUser ? r.maxX : r.minX
         let dir: CGFloat = fromUser ? 1 : -1
@@ -238,8 +238,8 @@ struct BubbleShape: Shape {
         t.addQuadCurve(to: CGPoint(x: x + dir * 5, y: r.maxY), control: CGPoint(x: x - dir * 2, y: r.maxY))
         t.addQuadCurve(to: CGPoint(x: x - dir * 2, y: r.maxY - 16), control: CGPoint(x: x - dir * 2, y: r.maxY - 4))
         t.closeSubpath()
-        p.addPath(t)
-        return p
+        // Joined, not just added: drawn the other way round (your side), an added tail punches a hole.
+        return p.union(t)
     }
 }
 
