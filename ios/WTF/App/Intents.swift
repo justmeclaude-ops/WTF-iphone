@@ -3,68 +3,71 @@ import AppIntents
 /// "WTF?" from the Action button (or a Shortcut): without opening the app or unlocking. With
 /// AirPods or headphones in, the answer is read into your ears; otherwise it shows at the top
 /// of the screen. Either way it's waiting in Ask when you next open WTF.
-struct AskWTFIntent: AudioPlaybackIntent, AudioRecordingIntent {
+struct AskWTFIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Ask WTF"
     static let description = IntentDescription("What you were just on about: read aloud if AirPods are in, shown on screen if not. Starts listening if it's off; press again for what came before.")
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.answerFromShortcut()
+        let answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
         return .result(dialog: "\(answer)")
     }
 }
 
 // Audio-playback intents: iOS lets them start speaking straight away from the background,
-// rather than holding the sound back until the button's pressed again. Audio-recording too, so
-// a press can start listening without opening the app.
+// rather than holding the sound back until the button's pressed again. Audio-recording and Live
+// Activity too, so a press can start listening without opening the app: iOS only lets an app
+// switch the microphone on from the background with its Lock Screen card showing, and only
+// these intents may start the card from there. If iOS still says no, WTF comes forward and
+// starts listening there (see comeForward).
 
 /// "What was I saying?" from the Action button, Siri or a Shortcut, without opening the app:
 /// read into your ears if AirPods or headphones are in, shown at the top of the screen if not.
 /// If listening's off, a press starts it; pressed again soon after an answer, it goes a step
 /// further back (see AppModel.answerFromShortcut).
-struct WhatWasISayingIntent: AudioPlaybackIntent, AudioRecordingIntent {
+struct WhatWasISayingIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "What Was I Saying?"
     static let description = IntentDescription("What you were just on about, read into your AirPods if they're in. Press again for what came before; if WTF isn't listening, starts it.")
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.answerFromShortcut()
+        let answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
         return .result(dialog: "\(answer)")
     }
 }
 
 /// Listening on or off without opening the app.
-struct ToggleListeningIntent: AudioRecordingIntent {
+struct ToggleListeningIntent: AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Start or Stop Listening"
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.toggleListeningFromShortcut()
+        let answer = await AppModel.shared.toggleListeningFromShortcut(forward: { await comeForward() })
         return .result(dialog: "\(answer)")
     }
 }
 
-struct StartListeningIntent: AudioRecordingIntent {
+struct StartListeningIntent: AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Start Listening"
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppModel.shared.buttonPressedAt = Date()
-        let started = await AppModel.shared.startListening()
+        let started = await AppModel.shared.startListeningFromShortcut(forward: { await comeForward() })
         let answer = started ? "WTF is listening." : AppModel.shared.problem ?? "Couldn't start listening."
         return .result(dialog: "\(answer)")
     }
 }
 
-struct StopListeningIntent: AudioRecordingIntent {
+struct StopListeningIntent: AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "Stop Listening"
     static let openAppWhenRun = false
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
@@ -106,10 +109,10 @@ enum WTFChoice: String, AppEnum {
 
 /// A menu: for the Action button (or Back Tap) if you'd rather choose each time than have one
 /// press do the most likely thing. Set a choice when assigning it and it does that straight away.
-struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent {
+struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "WTF Menu"
     static let description = IntentDescription("Choose: what you were saying, what came before, listening on or off, or your list.")
-    static let openAppWhenRun = false
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @Parameter(title: "Choice", requestValueDialog: "What do you need?")
@@ -121,12 +124,34 @@ struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent {
         if let choice { pick = choice } else { pick = try await $choice.requestValue("What do you need?") }
         let answer: String
         switch pick {
-        case .saying: answer = await AppModel.shared.answerFromShortcut()
+        case .saying: answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
         case .before: answer = await AppModel.shared.beforeThatFromShortcut()
-        case .listening: answer = await AppModel.shared.toggleListeningFromShortcut()
+        case .listening: answer = await AppModel.shared.toggleListeningFromShortcut(forward: { await comeForward() })
         case .list: answer = await AppModel.shared.listFromShortcut()
         }
         return .result(dialog: "\(answer)")
+    }
+}
+
+extension AppIntent {
+    /// iOS wouldn't let WTF switch the microphone on from the background: bring WTF forward,
+    /// where it always can (after unlocking, if the iPhone's locked). For intents with
+    /// `.foreground(.dynamic)` in their supported modes. True if WTF's now in front.
+    @MainActor
+    func comeForward() async -> Bool {
+        let mode = systemContext.currentMode
+        guard mode == .background, mode.canContinueInForeground else {
+            Log.info("Listening didn't start, and WTF can't come forward from here")
+            return false
+        }
+        do {
+            try await continueInForeground("Open WTF to start listening?", alwaysConfirm: false)
+            Log.info("WTF came forward to start listening")
+            return true
+        } catch {
+            Log.error("WTF couldn't come forward to start listening", error)
+            return false
+        }
     }
 }
 

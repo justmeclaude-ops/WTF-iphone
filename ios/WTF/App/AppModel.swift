@@ -106,14 +106,27 @@ final class AppModel {
     }
 
     /// Starts listening and returns once it has (or couldn't): for the app, and for the Action
-    /// button and controls, which start it without opening the app.
+    /// button and controls, which start it without opening the app. A second ask while a start is
+    /// under way (the app coming forward as a press starts it) waits for that one.
     @discardableResult
     func startListening() async -> Bool {
+        if let starting { return await starting.value }
+        let start = Task { await startListeningNow() }
+        starting = start
+        let started = await start.value
+        starting = nil
+        return started
+    }
+
+    @ObservationIgnored private var starting: Task<Bool, Never>?
+
+    private func startListeningNow() async -> Bool {
         if recording && Recorder.shared.running { return true }
         guard await AVPermissions.microphone() else {
             problem = "WTF needs the microphone: Settings › Privacy & Security › Microphone."
             return false
         }
+        var microphone = false
         do {
             // Only the first time does the speech model need fetching; after that, no network at all.
             if !(await SpeechEngine.shared.isReady()) { try await SpeechEngine.shared.prepare() }
@@ -125,6 +138,7 @@ final class AppModel {
             // Screen or the Action button if its card is showing.
             ListeningActivity.shared.start()
             await LiveTranscriber.shared.start()
+            microphone = true
             try await switchMicrophoneOn()
             recording = true
             listeningSince = Date()
@@ -135,11 +149,12 @@ final class AppModel {
             Log.error("Couldn't start listening", error)
             ListeningActivity.shared.stop()
             await LiveTranscriber.shared.stop()
-            let code = AVAudioSession.ErrorCode(rawValue: (error as NSError).code)
-            if code == .insufficientPriority || code == .cannotStartRecording || code == .cannotInterruptOthers {
-                problem = "iOS didn\u{2019}t let WTF switch the microphone on from here (something else may have it). Open WTF to start listening."
-            } else {
+            if !microphone {
                 problem = "Couldn't start listening: \(error.localizedDescription)"
+            } else if UIApplication.shared.applicationState == .active {
+                problem = "Couldn\u{2019}t switch the microphone on: something else may be using it. Try again in a moment."
+            } else {
+                problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
             }
             return false
         }
@@ -157,10 +172,23 @@ final class AppModel {
             } catch {
                 lastError = error
                 Log.error("The microphone didn't come on (try \(attempt) of 4)", error)
-                try? await Task.sleep(for: .milliseconds(400 * attempt))
+                if attempt < 4 { try? await Task.sleep(for: .milliseconds(400 * attempt)) }
             }
         }
         if let lastError { throw lastError }
+    }
+
+    /// From an App Intent: brings WTF forward, for when iOS won't let it switch the microphone on
+    /// from the background. True if WTF's now in front.
+    typealias ComeForward = @MainActor () async -> Bool
+
+    /// Listening on, from the Action button or a Shortcut, without opening the app if it can. If
+    /// iOS won't let WTF switch the microphone on from the background, [forward] brings WTF
+    /// forward, where it always can, and it starts there instead.
+    func startListeningFromShortcut(forward: ComeForward? = nil) async -> Bool {
+        if await startListening() { return true }
+        guard let forward, await forward() else { return false }
+        return await startListening()
     }
 
     static let pausedNotice = "wtf.listening.paused"
@@ -250,13 +278,13 @@ final class AppModel {
     /// One button, more than one thing: if listening's off, a press starts it (Settings can turn
     /// that off). Pressed again within 20 seconds of an answer, it goes a step further back: the
     /// topic left hanging before that, then the one before. After that it starts over.
-    func answerFromShortcut() async -> String {
+    func answerFromShortcut(forward: ComeForward? = nil) async -> String {
         buttonPressedAt = Date()
         let pressed = Date()
         if !recording, UserDefaults.standard.object(forKey: "buttonStartsListening") as? Bool ?? true {
             // Listening was meant to be on: something (a call, iOS closing the app) stopped it.
             let wasOn = UserDefaults.standard.bool(forKey: "listening")
-            let started = await startListening()
+            let started = await startListeningFromShortcut(forward: forward)
             let answer = started ? (wasOn ? "WTF had stopped listening, so it's listening again now." : "Listening. Press again any time for what you were just saying.")
                 : (problem ?? "Couldn't start listening.")
             _ = await ReadAloud.shared.startIntoHeadphones(started ? "Listening." : answer)
@@ -315,13 +343,13 @@ final class AppModel {
     private var lastPress = Date.distantPast
 
     /// Listening on or off, from a control or a Shortcut, without opening the app.
-    func toggleListeningFromShortcut() async -> String {
+    func toggleListeningFromShortcut(forward: ComeForward? = nil) async -> String {
         buttonPressedAt = Date()
         if recording {
             setListening(false)
             return "WTF has stopped listening."
         }
-        return await startListening() ? "WTF is listening." : (problem ?? "Couldn't start listening.")
+        return await startListeningFromShortcut(forward: forward) ? "WTF is listening." : (problem ?? "Couldn't start listening.")
     }
 
     /// Your list, read out (or shown): what's coming up, what to do, what to buy.
