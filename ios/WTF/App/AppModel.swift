@@ -41,6 +41,9 @@ final class AppModel {
     var listeningSince: Date?
     /// How far a transcription pass has got, while one's running.
     var transcribing: (done: Int, total: Int)?
+    /// When the Action button (or another WTF shortcut or control) was last pressed: for the
+    /// setup page's "It works".
+    var buttonPressedAt: Date?
 
     static let quickQuestion = "WTF was I just on about?"
 
@@ -248,6 +251,7 @@ final class AppModel {
     /// that off). Pressed again within 20 seconds of an answer, it goes a step further back: the
     /// topic left hanging before that, then the one before. After that it starts over.
     func answerFromShortcut() async -> String {
+        buttonPressedAt = Date()
         let pressed = Date()
         if !recording, UserDefaults.standard.object(forKey: "buttonStartsListening") as? Bool ?? true {
             // Listening was meant to be on: something (a call, iOS closing the app) stopped it.
@@ -284,6 +288,7 @@ final class AppModel {
 
     /// "What came before that?" on its own (from the WTF Menu): the next step back each time.
     func beforeThatFromShortcut() async -> String {
+        buttonPressedAt = Date()
         if backstory.isEmpty || Date().timeIntervalSince(lastPress) >= 20 {
             let threads = await pipeline.latestThreads()
             backstory = Threads.backstory(threads)
@@ -311,6 +316,7 @@ final class AppModel {
 
     /// Listening on or off, from a control or a Shortcut, without opening the app.
     func toggleListeningFromShortcut() async -> String {
+        buttonPressedAt = Date()
         if recording {
             setListening(false)
             return "WTF has stopped listening."
@@ -320,6 +326,7 @@ final class AppModel {
 
     /// Your list, read out (or shown): what's coming up, what to do, what to buy.
     func listFromShortcut() async -> String {
+        buttonPressedAt = Date()
         let open = openItems()
         var parts: [String] = []
         let now = Date()

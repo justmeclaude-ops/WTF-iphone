@@ -57,6 +57,7 @@ struct StartListeningIntent: AudioRecordingIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.buttonPressedAt = Date()
         let started = await AppModel.shared.startListening()
         let answer = started ? "WTF is listening." : AppModel.shared.problem ?? "Couldn't start listening."
         return .result(dialog: "\(answer)")
@@ -70,6 +71,7 @@ struct StopListeningIntent: AudioRecordingIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
+        AppModel.shared.buttonPressedAt = Date()
         if AppModel.shared.recording { AppModel.shared.setListening(false) }
         return .result(dialog: "WTF has stopped listening.")
     }
