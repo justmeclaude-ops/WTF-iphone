@@ -155,6 +155,30 @@ public enum Threads {
     }
 
     /// The topics still left hanging, newest first.
+    /// For pressing the Action button again: what came before what you were just saying, one
+    /// step further back each time. Topics left hanging first (newest first, with what you were
+    /// in the middle of saying), then the others, at most [limit].
+    public static func backstory(_ threads: [TopicThread], limit: Int = 3) -> [String] {
+        let before = threads.filter { $0.status != .current }
+        let dropped = before.filter { $0.status == .hanging }.reversed()
+        let others = before.filter { $0.status != .hanging }.reversed()
+        var out: [String] = []
+        for t in dropped {
+            var line = "Before that, you'd left \(t.title) hanging."
+            if let left = t.leftAt?.trimmingCharacters(in: .whitespacesAndNewlines), !left.isEmpty {
+                line += " " + left.prefix(1).uppercased() + left.dropFirst() + (left.hasSuffix(".") ? "" : ".")
+            }
+            if let facts = t.facts, !facts.isEmpty { line += " (\(facts))" }
+            out.append(line)
+        }
+        for t in others {
+            var line = "Before that, you were on \(t.title)."
+            if let facts = t.facts, !facts.isEmpty { line += " (\(facts))" }
+            out.append(line)
+        }
+        return Array(out.prefix(limit))
+    }
+
     public static func hanging(_ threads: [TopicThread]) -> [TopicThread] {
         threads.filter { $0.status == .hanging }.reversed()
     }

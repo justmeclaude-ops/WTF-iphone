@@ -1,4 +1,5 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
@@ -6,6 +7,66 @@ import WidgetKit
 struct WTFWidgets: WidgetBundle {
     var body: some Widget {
         ListeningLiveActivity()
+        AskControl()
+        ListeningControl()
+        ListControl()
+    }
+}
+
+// Controls: for Control Center, the two Lock Screen buttons (instead of the torch or camera), or
+// the Action button. Each works without opening WTF.
+
+struct AskControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.wtf.ios.control.ask") {
+            ControlWidgetButton(action: WTFAskControlIntent()) {
+                Label("What Was I Saying?", systemImage: "questionmark.bubble")
+            }
+        }
+        .displayName("What Was I Saying?")
+        .description("Hear what you were just on about. Press again for what came before.")
+    }
+}
+
+struct ListeningControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.wtf.ios.control.listening") {
+            ControlWidgetButton(action: WTFListeningControlIntent()) {
+                Label("WTF Listening", systemImage: "waveform")
+            }
+        }
+        .displayName("Start or Stop Listening")
+        .description("Turn WTF's listening on or off.")
+    }
+}
+
+struct ListControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.wtf.ios.control.list") {
+            ControlWidgetButton(action: WTFListControlIntent()) {
+                Label("Read My List", systemImage: "checklist")
+            }
+        }
+        .displayName("Read My List")
+        .description("What's coming up, what to do and what to buy, read out.")
+    }
+}
+
+/// The two buttons on the Lock Screen card: the answer, and a pause.
+struct CardButtons: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(intent: WTFAskControlIntent()) {
+                Label("What was I saying?", systemImage: "questionmark.bubble")
+                    .frame(maxWidth: .infinity)
+            }
+            Button(intent: WTFListeningControlIntent()) {
+                Label("Pause", systemImage: "pause.fill")
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .buttonStyle(.bordered)
+        .tint(.white)
     }
 }
 
@@ -32,8 +93,7 @@ struct ListeningLiveActivity: Widget {
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
                         if s.trail.count > 1 { Trail(steps: s.trail) }
-                        Label("Tap: what was I saying?", systemImage: "questionmark.bubble")
-                            .font(.caption).foregroundStyle(.secondary)
+                        CardButtons()
                     }
                 }
             } compactLeading: {
@@ -87,6 +147,7 @@ struct LockScreenCard: View {
                         .multilineTextAlignment(.trailing).frame(maxWidth: 72)
                 }
                 if state.trail.count > 1 { Trail(steps: state.trail) }
+                CardButtons()
             }
             .padding(16)
         }

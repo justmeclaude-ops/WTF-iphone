@@ -177,4 +177,16 @@ final class UnderstandingTests: XCTestCase {
         XCTAssertTrue(JoinedAudio.accept(old: old, new: "[10:00:00] You: one two three four\n[10:00:03] Speaker 1: five six seven eight nine ten"))
         XCTAssertFalse(JoinedAudio.accept(old: old, new: "[10:00:00] You: one two three"))
     }
+
+    func testPressingAgainGoesFurtherBack() {
+        let t0 = Date(timeIntervalSince1970: 0)
+        var party = TopicThread(title: "Mum's party", start: t0, end: t0, status: .hanging, leftAt: "you were saying the Crown has a back room")
+        party.facts = "Sat 1 Nov, 7pm"
+        let mot = TopicThread(title: "The MOT", start: t0, end: t0, status: .finished)
+        let news = TopicThread(title: "The news", start: t0, end: t0, status: .current)
+        let steps = Threads.backstory([party, mot, news])
+        XCTAssertEqual(steps, ["Before that, you'd left Mum's party hanging. You were saying the Crown has a back room. (Sat 1 Nov, 7pm)",
+                               "Before that, you were on The MOT."])
+        XCTAssertTrue(Threads.backstory([news]).isEmpty)
+    }
 }

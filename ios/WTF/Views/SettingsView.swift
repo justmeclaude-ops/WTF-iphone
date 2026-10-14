@@ -19,6 +19,7 @@ struct SettingsView: View {
     @AppStorage("useContacts") private var useContacts = false
     @AppStorage("useCalendar") private var useCalendar = false
     @AppStorage("airPodsMic") private var airPodsMic = false
+    @AppStorage("buttonStartsListening") private var buttonStartsListening = true
     @State private var accessProblem: String?
 
     var body: some View {
@@ -99,10 +100,17 @@ struct SettingsView: View {
                     NavigationLink(value: "voice") {
                         LabeledContent("Read-Aloud Voice", value: ReadAloud.voice?.name ?? "Default")
                     }
+                    Toggle("A Press Starts Listening", isOn: $buttonStartsListening).tint(.green)
                 } header: {
                     Text("Action Button")
                 } footer: {
-                    Text("Settings › Action Button › Shortcut › WTF › What Was I Saying?. A press tells you what you were just on about, without unlocking: read into your ears if AirPods are in, shown at the top of the screen if not.")
+                    Text("""
+                        Set it up in Settings › Action Button › Shortcut › WTF › What Was I Saying?. Then, without unlocking:
+                        \u{2022} A press tells you what you were just on about: read into your ears if AirPods are in, shown at the top of the screen if not.
+                        \u{2022} Press again within 20 seconds for what came before: the topic you left hanging, then the one before.
+                        \u{2022} If WTF isn\u{2019}t listening, a press starts it (unless you turn that off above).
+                        More buttons: add WTF\u{2019}s controls to Control Center, or to the Lock Screen in place of the torch or camera (hold the Lock Screen, Customise, then tap a corner button), for What Was I Saying?, Start or Stop Listening, and Read My List. Or tap the back of the iPhone: Settings › Accessibility › Touch › Back Tap, and choose a WTF shortcut.
+                        """)
                 }
 
                 Section {

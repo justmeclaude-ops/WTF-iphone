@@ -81,26 +81,7 @@ final class AppModel {
 
     func setListening(_ on: Bool) {
         if on {
-            Task {
-                guard await AVPermissions.microphone() else {
-                    problem = "WTF needs the microphone: Settings › Privacy & Security › Microphone."
-                    return
-                }
-                do {
-                    try await SpeechEngine.shared.prepare()
-                    // The voice models download once (about 22 MB) while you talk.
-                    if VoiceEngine.enabled { Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } } // failures are logged inside
-                    await LiveTranscriber.shared.start()
-                    try Recorder.shared.start()
-                    recording = true
-                    ListeningActivity.shared.start()
-                    problem = nil
-                    UserDefaults.standard.set(true, forKey: "listening")
-                } catch {
-                    Log.error("Couldn't start listening", error)
-                    problem = "Couldn't start listening: \(error.localizedDescription)"
-                }
-            }
+            Task { _ = await startListening() }
         } else {
             Recorder.shared.stop()
             recording = false
@@ -114,6 +95,33 @@ final class AppModel {
                 await pipeline.closeLatest()
                 await pipeline.run()
             }
+        }
+    }
+
+    /// Starts listening and returns once it has (or couldn't): for the app, and for the Action
+    /// button and controls, which start it without opening the app.
+    @discardableResult
+    func startListening() async -> Bool {
+        if recording && Recorder.shared.running { return true }
+        guard await AVPermissions.microphone() else {
+            problem = "WTF needs the microphone: Settings › Privacy & Security › Microphone."
+            return false
+        }
+        do {
+            try await SpeechEngine.shared.prepare()
+            // The voice models download once (about 22 MB) while you talk.
+            if VoiceEngine.enabled { Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } } // failures are logged inside
+            await LiveTranscriber.shared.start()
+            try Recorder.shared.start()
+            recording = true
+            ListeningActivity.shared.start()
+            problem = nil
+            UserDefaults.standard.set(true, forKey: "listening")
+            return true
+        } catch {
+            Log.error("Couldn't start listening", error)
+            problem = "Couldn't start listening: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -196,18 +204,78 @@ final class AppModel {
         }
     }
 
-    /// The Action button's (or Siri's) answer: kept in Ask, read into your ears if AirPods or
-    /// headphones are in, and returned to show on screen. Always back within a few seconds: it
-    /// uses the answer kept ready while you talked if nothing's been said since, otherwise
-    /// works one out with a short limit, and falls back to what was said word for word.
+    /// The Action button's (or Siri's, or a control's) answer: kept in Ask, read into your ears if
+    /// AirPods or headphones are in, and returned to show on screen. Always back within a few
+    /// seconds: it uses the answer kept ready while you talked if nothing's been said since,
+    /// otherwise works one out with a short limit, and falls back to what was said word for word.
+    ///
+    /// One button, more than one thing: if listening's off, a press starts it (Settings can turn
+    /// that off). Pressed again within 20 seconds of an answer, it goes a step further back: the
+    /// topic left hanging before that, then the one before. After that it starts over.
     func answerFromShortcut() async -> String {
         let pressed = Date()
-        let answer = await Standby.shared.answerNow()
+        if !recording, UserDefaults.standard.object(forKey: "buttonStartsListening") as? Bool ?? true {
+            let started = await startListening()
+            let answer = started ? "Listening. Press again any time for what you were just saying." : (problem ?? "Couldn't start listening.")
+            _ = await ReadAloud.shared.startIntoHeadphones(started ? "Listening." : answer)
+            Log.info("Action button: \(started ? "started listening" : "couldn't start listening")")
+            return answer
+        }
+        var answer: String
+        if pressed.timeIntervalSince(lastPress) < 20, backstory.indices.contains(step) {
+            answer = backstory[step]
+            step += 1
+        } else {
+            answer = await Standby.shared.answerNow()
+            let threads = await pipeline.latestThreads()
+            backstory = Threads.backstory(threads)
+            step = 0
+        }
+        if step == backstory.count, step > 0, pressed.timeIntervalSince(lastPress) < 20 {
+            answer += " That's as far back as I've got."
+            step += 1
+        }
+        lastPress = Date()
         messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
         messages.append(ChatMessage(fromUser: false, text: answer))
         // Waits only until it's started playing: the sound keeps the app awake to the end.
         let reading = await ReadAloud.shared.startIntoHeadphones(answer)
         Log.info("Action button: answered in \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s, \(reading ? "reading it out" : "shown only")")
+        return answer
+    }
+
+    /// Where pressing again goes: the topics before what you were just saying, and how far it's got.
+    private var backstory: [String] = []
+    private var step = 0
+    private var lastPress = Date.distantPast
+
+    /// Listening on or off, from a control or a Shortcut, without opening the app.
+    func toggleListeningFromShortcut() async -> String {
+        if recording {
+            setListening(false)
+            return "WTF has stopped listening."
+        }
+        return await startListening() ? "WTF is listening." : (problem ?? "Couldn't start listening.")
+    }
+
+    /// Your list, read out (or shown): what's coming up, what to do, what to buy.
+    func listFromShortcut() async -> String {
+        let open = openItems()
+        var parts: [String] = []
+        let now = Date()
+        let events = open.filter { $0.type == .event && ($0.start ?? .distantFuture) >= now.addingTimeInterval(-3600) }
+            .sorted { ($0.start ?? .distantFuture) < ($1.start ?? .distantFuture) }.prefix(3)
+        if !events.isEmpty {
+            parts.append("Coming up: " + events.map { e in
+                e.title + (e.start.map { " " + ($0.formatted(.dateTime.weekday(.wide)) + (e.allDay ? "" : " at " + $0.formatted(date: .omitted, time: .shortened))) } ?? "")
+            }.joined(separator: ", ") + ".")
+        }
+        let todos = open.filter { $0.type == .todo }.prefix(5).map(\.title)
+        if !todos.isEmpty { parts.append("To do: " + todos.joined(separator: ", ") + ".") }
+        let buy = open.filter { $0.type == .buy }.prefix(8).map(\.title)
+        if !buy.isEmpty { parts.append("To buy: " + buy.joined(separator: ", ") + ".") }
+        let answer = parts.isEmpty ? "Your list's empty." : parts.joined(separator: " ")
+        _ = await ReadAloud.shared.startIntoHeadphones(answer)
         return answer
     }
 
