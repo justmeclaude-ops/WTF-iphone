@@ -22,18 +22,40 @@ public enum Prompts {
     /// Roughly 4 characters a token in English.
     public static func tokens(_ s: String) -> Int { s.count / 4 + 1 }
 
-    /// The last lines of [transcript] that fit in [budget] tokens, oldest first.
+    /// The last lines of [transcript] that fit in [budget] tokens, oldest first. If even the
+    /// newest line is too long (one person talking for minutes), the end of it.
     public static func tail(_ transcript: String, budget: Int) -> String {
-        var kept: [Substring] = []
+        let lines = transcript.split(separator: "\n").map(String.init)
+        var kept: [String] = []
         var used = 0
-        for line in transcript.split(separator: "\n").reversed() {
-            let t = tokens(String(line)) + 1
-            if used + t > budget { break }
+        var cut = false
+        for line in lines.reversed() {
+            let t = tokens(line) + 1
+            if used + t > budget {
+                cut = true
+                if kept.isEmpty { kept = [end(of: line, budget: budget)] }
+                break
+            }
             kept.insert(line, at: 0)
             used += t
         }
-        let cut = kept.count < transcript.split(separator: "\n").count
         return (cut ? "(\u{2026}earlier part left out\u{2026})\n" : "") + kept.joined(separator: "\n")
+    }
+
+    /// The last [budget] tokens' worth of a line, keeping who said it ("You: …the end of it").
+    static func end(of line: String, budget: Int) -> String {
+        var label = ""
+        var text = Substring(line)
+        if let colon = line.range(of: ": "), line.distance(from: line.startIndex, to: colon.lowerBound) <= 45 {
+            label = String(line[..<colon.upperBound])
+            text = line[colon.upperBound...]
+        }
+        let room = max(40, (budget - tokens(label) - 2) * 4)
+        guard text.count > room else { return line }
+        var kept = text.suffix(room)
+        // Start at a word.
+        if let space = kept.firstIndex(of: " ") { kept = kept[kept.index(after: space)...] }
+        return label + "\u{2026}" + kept
     }
 
     public static let instructions = """
@@ -123,6 +145,7 @@ public enum Prompts {
     /// For finding things to act on.
     public static func actions(lines: [String], conversationStart: Date, background: String = "") -> String {
         let f = DateFormatter(); f.dateFormat = "EEEE d MMMM"
+        let said = tail(lines.joined(separator: "\n"), budget: background.isEmpty ? 1_800 : 1_400)
         return background + """
             Lines from a conversation recorded on \(f.string(from: conversationStart)). Find appointments (with when they are, \
             in the words used), things to buy (one per item), and things the speaker said they would do. Be strict: an \
@@ -131,7 +154,7 @@ public enum Prompts {
             meals out or takeaways; a film, a show or a topic mentioned in passing is none of these. Only what was actually \
             said; leave a list empty if there's nothing for it.
 
-            \(lines.joined(separator: "\n"))
+            \(said)
             """
     }
 

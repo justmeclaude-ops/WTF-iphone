@@ -57,8 +57,7 @@ final class Conversation {
     /// You've fixed words in it yourself: it's kept as it is, not transcribed afresh at the end.
     var userEdited: Bool?
 
-    /// Misheard words fixed in it, by the AI or by you ([LearnedFix] as JSON): applied again if
-    /// the whole conversation is transcribed afresh at the end.
+    /// Words you fixed in it yourself ([LearnedFix] as JSON).
     var fixData: Data?
 
     var fixes: [LearnedFix] {

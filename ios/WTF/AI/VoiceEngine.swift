@@ -6,6 +6,9 @@ import WTFCore
 /// converted for the Neural Engine (FluidAudio). The models (about 22 MB) download once.
 actor VoiceEngine {
     static let shared = VoiceEngine()
+    /// A second set of voice models for hearing a whole conversation again, so recordings being
+    /// made meanwhile aren't kept waiting behind it.
+    static let whole = VoiceEngine()
 
     /// Settings › Tell Voices Apart.
     static var enabled: Bool { UserDefaults.standard.object(forKey: "voices") as? Bool ?? true }

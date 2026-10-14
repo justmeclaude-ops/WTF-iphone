@@ -74,6 +74,9 @@ final class UnderstandingTests: XCTestCase {
         XCTAssertEqual(hints.map(\.label), ["Speaker 2", "Speaker 3"])
         XCTAssertEqual(hints.map(\.name), ["Sarah", "Tom"])
         XCTAssertEqual(hints.last?.times, 2)
+        // "Sorry." or "Right," alone isn't someone being addressed.
+        let everything: (String) -> Bool = { _ in true }
+        XCTAssertTrue(NameHints.suggest("[10:00:00] Speaker 1: Hello there.\n[10:00:02] You: Sorry. Right, so anyway. Great, thanks.", isName: everything).isEmpty)
         // Already named voices and non-names aren't suggested.
         XCTAssertTrue(NameHints.suggest("[10:00:00] Sarah: Hi.\n[10:00:02] You: Thanks, Sarah.", isName: { names.contains($0) }).isEmpty)
     }
@@ -81,18 +84,28 @@ final class UnderstandingTests: XCTestCase {
     func testMemoryIsTidiedAndReadable() {
         let m = ConversationMemory(people: ["Speaker 2: probably Sarah"], decided: ["Party at the Crown", "party at the Crown", " "],
                                    suggested: ["None"], todo: ["You: ring the garage to confirm the MOT"], facts: ["2 Nov, 7pm"]).cleaned()
-        XCTAssertEqual(m.decided, ["Party at the Crown"])
+        XCTAssertEqual(m.decided, ["party at the Crown"])
+        let changed = ConversationMemory(decided: ["Party on Saturday at 7pm", "Party on Sunday at 7pm"], facts: ["Dentist Tuesday 3pm", "Dentist Thursday 3pm"]).cleaned()
+        XCTAssertEqual(changed.decided.count, 2)
+        XCTAssertEqual(changed.facts.count, 2)
         XCTAssertTrue(m.suggested.isEmpty)
         let text = m.text()
-        XCTAssertTrue(text.contains("Decided:\n- Party at the Crown"))
+        XCTAssertTrue(text.contains("Decided:\n- party at the Crown"))
         XCTAssertFalse(text.contains("Suggested"))
         XCTAssertTrue(Prompts.memory(.empty, new: "[10:00:00] You: Hello").contains("(none yet)"))
         XCTAssertTrue(Prompts.background(memory: m, facts: ["Mum's birthday is 2 November"]).contains("Things I know from other days:\n- Mum's birthday is 2 November"))
+        let big = ConversationMemory(people: (1...6).map { "Person \($0) who is organising quite a lot of things for the party" },
+                                     decided: (1...6).map { "Decision number \($0) about the venue and the food and the music" },
+                                     suggested: (1...6).map { "Suggestion \($0) about where everyone might stay overnight" },
+                                     todo: (1...6).map { "Task \($0) that someone said they would sort out this week" },
+                                     facts: (1...6).map { "Detail \($0): the Crown, Saturday 1 November, 7pm, back room" })
+        XCTAssertLessThanOrEqual(Prompts.tokens(Prompts.background(memory: big, facts: [])), 480)
     }
 
     func testKnownFactsAreFoundWhenRelevantAndNotRepeated() {
         let facts = ["Mum's birthday is 2 November", "Tom wants the projector link", "The garage is on Wood Lane"]
         XCTAssertEqual(KnownFacts.relevant(facts, to: "What are we doing for mum's birthday?"), ["Mum's birthday is 2 November"])
+        XCTAssertTrue(KnownFacts.relevant(facts + ["Sarah is allergic to nuts"], to: "Where is the party?").isEmpty)
         XCTAssertEqual(KnownFacts.fresh(["mum's birthday is on 2 November", "Sarah works at the library", "ok"], known: facts), ["Sarah works at the library"])
         XCTAssertEqual(KnownFacts.names(in: facts), ["November", "Wood", "Lane"])
     }
@@ -108,6 +121,26 @@ final class UnderstandingTests: XCTestCase {
         XCTAssertEqual(CalendarCheck.check(title: "MOT", start: at(16, 14), allDay: false, against: entries, calendar: cal),
                        .differs("Your calendar has it at 9:00 am"))
         XCTAssertNil(CalendarCheck.check(title: "Vet appointment", start: at(20, 15, 30), allDay: false, against: entries, calendar: cal))
+        // Sharing only "dinner", "call" or "meeting" isn't the same thing.
+        let busy = [CalendarCheck.Entry(title: "Dinner with Sarah", start: at(16, 19), allDay: false),
+                    CalendarCheck.Entry(title: "Dentist appointment", start: at(20, 15), allDay: false),
+                    CalendarCheck.Entry(title: "Team meeting", start: at(14, 10), allDay: false),
+                    CalendarCheck.Entry(title: "Call with Alice", start: at(15, 10), allDay: false)]
+        XCTAssertNil(CalendarCheck.check(title: "Dinner with Tom", start: at(16, 0), allDay: true, against: busy, calendar: cal))
+        XCTAssertNil(CalendarCheck.check(title: "Vet appointment", start: at(20, 15), allDay: false, against: busy, calendar: cal))
+        XCTAssertNil(CalendarCheck.check(title: "Meeting with the bank", start: at(14, 10), allDay: false, against: busy, calendar: cal))
+        XCTAssertNil(CalendarCheck.check(title: "Call with Bob", start: at(15, 14), allDay: false, against: busy, calendar: cal))
+        XCTAssertEqual(CalendarCheck.check(title: "Dinner with Sarah", start: at(16, 0), allDay: true, against: busy, calendar: cal), .alreadyThere)
+    }
+
+    func testAVeryLongLineStillReachesThePrompt() {
+        let monologue = "[10:00:00] You: " + (1...600).map { "word\($0)" }.joined(separator: " ") + " and the end."
+        let t = Prompts.tail(monologue, budget: 200)
+        XCTAssertTrue(t.hasPrefix("(\u{2026}earlier part left out\u{2026})\n[10:00:00] You: \u{2026}"), String(t.prefix(80)))
+        XCTAssertTrue(t.hasSuffix("and the end."))
+        XCTAssertLessThanOrEqual(Prompts.tokens(t), 230)
+        XCTAssertTrue(Prompts.spoken(transcript: monologue, topic: nil, leftAt: nil, now: Date()).contains("and the end."))
+        XCTAssertEqual(Prompts.tail("[10:00:00] You: short", budget: 200), "[10:00:00] You: short")
     }
 
     func testExcerptsKeepTheBestLinesInOrderWithTheirNeighbours() {
@@ -126,6 +159,9 @@ final class UnderstandingTests: XCTestCase {
         XCTAssertFalse(MusicFilter.isSong(Array(repeating: song, count: 6) + Array(repeating: talkOverRadio, count: 4)))
         XCTAssertFalse(MusicFilter.isSong(Array(repeating: talkOverRadio, count: 10)))
         XCTAssertFalse(MusicFilter.isSong([song, song]))
+        // Talk over a loud car radio is still talk.
+        let talkOverLoudRadio = MusicFilter.Window(music: 0.85, singing: 0.2, speech: 0.75)
+        XCTAssertFalse(MusicFilter.isSong(Array(repeating: song, count: 7) + Array(repeating: talkOverLoudRadio, count: 3)))
     }
 
     func testJoinedRecordingsMapBackToTheClock() {

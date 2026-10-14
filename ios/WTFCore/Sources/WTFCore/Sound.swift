@@ -12,7 +12,8 @@ public enum MusicFilter {
     public static func isSong(_ windows: [Window]) -> Bool {
         guard windows.count >= 3 else { return false }
         let song = windows.filter { w in (w.music >= 0.5 && w.singing >= 0.3 && w.singing >= w.speech * 0.8) || (w.music >= 0.8 && w.speech < 0.3) }.count
-        let talk = windows.filter { $0.speech >= 0.6 && $0.music < 0.4 }.count
+        // Talk counts as talk whatever's playing behind it (a car radio, the TV).
+        let talk = windows.filter { $0.speech >= 0.6 && $0.speech >= $0.singing }.count
         return Double(song) >= 0.7 * Double(windows.count) && Double(talk) < 0.15 * Double(windows.count)
     }
 }
@@ -38,7 +39,7 @@ public struct JoinedAudio: Sendable {
         pieces.append(Piece(at: at, length: length, recorded: recorded))
     }
 
-    /// The clock time of [seconds] into the joined audio (a gap counts as the piece after it).
+    /// The clock time of [seconds] into the joined audio (a gap counts as the end of the piece before it).
     public func time(at seconds: Double) -> Date {
         guard let piece = pieces.last(where: { $0.at <= seconds + 0.01 }) ?? pieces.first else { return Date(timeIntervalSince1970: 0) }
         return piece.recorded.addingTimeInterval(min(max(0, seconds - piece.at), piece.length))

@@ -17,10 +17,13 @@ actor SpeechEngine {
         return found
     }
 
-    /// [live]: also reports words before they're final, for transcribing as you speak.
+    /// [live]: also reports words before they're final, for transcribing as you speak. Otherwise
+    /// (a whole recording or conversation) its runner-up readings too, for fixing misheard words;
+    /// live, all day, they'd cost more battery than they're worth.
     func makeTranscriber(live: Bool = false) async -> SpeechTranscriber {
         SpeechTranscriber(locale: await transcriberLocale(), transcriptionOptions: [],
-                          reportingOptions: live ? [.volatileResults] : [], attributeOptions: [.audioTimeRange, .transcriptionConfidence])
+                          reportingOptions: live ? [.volatileResults] : [.alternativeTranscriptions],
+                          attributeOptions: [.audioTimeRange, .transcriptionConfidence])
     }
 
     /// Words it should expect: people you've named, shops, things on your list.

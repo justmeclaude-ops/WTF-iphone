@@ -21,6 +21,14 @@ actor Pipeline {
     /// Each with the words the recogniser doubted and the ones it was sure of, for fixing misheard words.
     private var toFollow: [(id: UUID, text: String, from: Date, to: Date, doubts: [Doubt], protected: Set<String>)] = []
 
+    /// Bumped by Delete Everything: work that was waiting on something checks it hasn't happened meanwhile.
+    private var wiped = 0
+
+    /// A conversation, fetched afresh by its id: one held across a wait may have been deleted meanwhile.
+    private func conversation(_ id: UUID) -> Conversation? {
+        (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first
+    }
+
     func addChunk(url: URL, start: Date, end: Date) {
         modelContext.insert(Chunk(start: start, end: end, path: url.path))
         try? modelContext.save()
@@ -39,9 +47,12 @@ actor Pipeline {
         let pending = (try? modelContext.fetch(FetchDescriptor<Chunk>(
             predicate: #Predicate { $0.status == "pending" }, sortBy: [SortDescriptor(\.start)]))) ?? []
         guard !pending.isEmpty, await SpeechEngine.shared.isReady() else { return true }
+        let generation = wiped
+        defer { Task { @MainActor in AppModel.shared.transcribing = nil } }
         var ok = true
         for (i, chunk) in pending.enumerated() {
             await MainActor.run { AppModel.shared.transcribing = (i, pending.count) }
+            guard wiped == generation else { return false }
             guard let path = chunk.path, FileManager.default.fileExists(atPath: path) else {
                 chunk.status = "failed"
                 continue
@@ -53,9 +64,14 @@ actor Pipeline {
                 let length = max(1, chunk.end.timeIntervalSince(chunk.start))
                 let started = Date()
                 // A song on the radio or the TV isn't conversation: not transcribed, so no lyrics.
-                if length >= 6, await withDeadline(5 + length / 4, { await MusicCheck.isSong(url) }) == true {
+                var isSong = false
+                if length >= 6 { isSong = await withDeadline(5 + length / 4, { await MusicCheck.isSong(url) }) == true }
+                guard wiped == generation else { return false }
+                if isSong {
                     Log.info("Recording \(chunk.start.formatted(date: .omitted, time: .standard)) (\(Int(length)) s) was music, so it wasn't transcribed")
-                    _ = await withDeadline(4) { await LiveTranscriber.shared.words(from: chunk.start, to: chunk.end) }
+                    let (from, to) = (chunk.start, chunk.end)
+                    _ = await withDeadline(4) { await LiveTranscriber.shared.words(from: from, to: to) }
+                    guard wiped == generation else { return false }
                     chunk.status = "music"
                     chunk.path = nil
                     try? FileManager.default.removeItem(atPath: path)
@@ -74,13 +90,15 @@ actor Pipeline {
                         }
                     }
                 }
-                guard let words else { throw StepTimedOut(what: "transcribing \(Int(length)) s of audio") }
                 let split = await heardVoices
+                guard wiped == generation else { return false }
+                guard let words else { throw StepTimedOut(what: "transcribing \(Int(length)) s of audio") }
                 Log.info("Recording \(chunk.start.formatted(date: .omitted, time: .standard)) (\(Int(length)) s): \(words.count) words \(live ? "live" : "from the file") (\(Doubts.summary(words))), \(split?.voices.count ?? 0) voices, \(String(format: "%.1f", Date().timeIntervalSince(started))) s")
                 let target = openConversation(for: chunk)
                 var voices = target?.voiceprints ?? []
                 let utterances = whoSaidWhat(words, split: split, voices: &voices, before: target?.transcript, start: chunk.start)
                 let text = TranscriptFormat.lines(utterances)
+                var keepAudio = false
                 if text.isEmpty {
                     chunk.status = "empty"
                 } else {
@@ -88,25 +106,33 @@ actor Pipeline {
                     if split != nil { c.voiceprints = voices }
                     chunk.status = "done"
                     chunk.conversationID = c.id
+                    let cid = c.id
+                    // The audio's kept until its conversation is over, to be heard again as a whole
+                    // (secondPass), unless it's grown too long for that: then none of it is kept.
+                    keepAudio = Self.hearAgain && c.end.timeIntervalSince(c.start) <= Self.hearAgainLimit
+                    if !keepAudio { forgetAudio(of: cid) }
                     try? modelContext.save()
+                    toFollow.append((cid, text, chunk.start, chunk.end, Doubts.of(words), Doubts.protected(words)))
                     await suggest(for: c, found: ruleActions(c))
-                    toFollow.append((c.id, text, chunk.start, chunk.end, Doubts.of(words), Doubts.protected(words)))
+                    guard wiped == generation else { return false }
                 }
-                // The audio's kept until its conversation is over, to be heard again as a whole
-                // (secondPass); otherwise, and if there was nothing in it, it goes now.
-                if chunk.status != "done" || !Self.hearAgain {
+                if !keepAudio {
                     chunk.path = nil
                     try? FileManager.default.removeItem(atPath: path)
                 }
             } catch {
+                guard wiped == generation else { return false }
                 Log.error("Couldn't transcribe the recording from \(chunk.start.formatted(date: .omitted, time: .standard)) (try \(chunk.attempts + 1) of 5)", error)
                 chunk.attempts += 1
-                if chunk.attempts >= 5 { chunk.status = "failed" }
+                if chunk.attempts >= 5 {
+                    chunk.status = "failed"
+                    chunk.path = nil
+                    try? FileManager.default.removeItem(atPath: path)
+                }
                 ok = false
             }
             try? modelContext.save()
         }
-        await MainActor.run { AppModel.shared.transcribing = nil }
         return ok
     }
 
@@ -122,22 +148,55 @@ actor Pipeline {
 
     /// The slow part: the thread map, summaries of finished conversations, and tidying up.
     private func think() async {
+        let generation = wiped
+        sweepAudio()
         await followThreads()
+        guard wiped == generation else { return }
         let quietBefore = Date().addingTimeInterval(-Double(gapMinutes) * 60)
-        let waiting = (try? modelContext.fetch(FetchDescriptor<Conversation>(
-            predicate: #Predicate { $0.summary == nil }))) ?? []
-        for c in waiting where c.closed || c.end < quietBefore {
-            await summarise(c)
+        let waiting = ((try? modelContext.fetch(FetchDescriptor<Conversation>(
+            predicate: #Predicate { $0.summary == nil }))) ?? []).filter { $0.closed || $0.end < quietBefore }.map(\.id)
+        for id in waiting {
+            guard wiped == generation else { return }
+            await summarise(id)
         }
-        // Audio kept for a second hearing is never kept long, whatever happens.
-        let dayAgo = Date().addingTimeInterval(-86_400)
-        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.status == "done" && $0.path != nil && $0.end < dayAgo }))) ?? [] {
-            if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
-            chunk.path = nil
-        }
+        guard wiped == generation else { return }
         let cutoff = Date().addingTimeInterval(-Double(keepDays) * 86_400)
         try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.end < cutoff })
         try? modelContext.delete(model: Chunk.self, where: #Predicate { $0.end < cutoff })
+        try? modelContext.save()
+    }
+
+    /// Audio that's no longer needed goes: anything kept for a second hearing for more than a
+    /// day, a whole-conversation file left by a second hearing that was cut short, and
+    /// recordings nothing refers to any more.
+    private func sweepAudio() {
+        let fm = FileManager.default
+        let dayAgo = Date().addingTimeInterval(-86_400)
+        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.status == "done" && $0.path != nil && $0.end < dayAgo }))) ?? [] {
+            if let path = chunk.path { try? fm.removeItem(atPath: path) }
+            chunk.path = nil
+        }
+        try? modelContext.save()
+        let referenced = Set(((try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.path != nil }))) ?? []).compactMap(\.path))
+        let dir = Recorder.audioDirectory
+        let tenMinutesAgo = Date().addingTimeInterval(-600)
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let path = dir.appendingPathComponent(name).path
+            let modified = (try? fm.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? Date()
+            // A recording still being made isn't in the database yet: only ones well finished go.
+            if name.hasPrefix("whole_") || (!referenced.contains(path) && modified < tenMinutesAgo) {
+                try? fm.removeItem(atPath: path)
+            }
+        }
+    }
+
+    /// Deletes the audio kept for a conversation.
+    private func forgetAudio(of id: UUID) {
+        let cid: UUID? = id
+        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == cid && $0.path != nil }))) ?? [] {
+            if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
+            chunk.path = nil
+        }
         try? modelContext.save()
     }
 
@@ -212,16 +271,18 @@ actor Pipeline {
             }
             return meaning * 10 + min(score(c, keys), 15)
         }
-        let best = pool.max { rank($0) < rank($1) }
+        let best = pool.map { ($0, rank($0)) }.max { $0.1 < $1.1 }?.0
         let notes = pool.prefix(12).map { (label: label($0), title: $0.title, summary: $0.summary) }
         guard let best else { return (notes, nil, "") }
         // A long conversation: the lines that bear on the question (and the ones either side), not just its end.
         var transcript = best.transcript
         if Prompts.tokens(TranscriptFormat.compact(transcript)) > 1_300 {
             let lines = transcript.split(separator: "\n").map(String.init)
-            let scores = lines.map { line -> Double in
+            // By meaning for up to 400 lines (the newest), by words for the rest: answers stay quick.
+            let byMeaning = max(0, lines.count - 400)
+            let scores = lines.enumerated().map { i, line -> Double in
                 let text = Corrections.text(of: line)
-                let meaning = asked.flatMap { a in Meaning.vector(text).map { Meaning.similarity(a, $0) } } ?? 0
+                let meaning = i < byMeaning ? 0 : asked.flatMap { a in Meaning.vector(text).map { Meaning.similarity(a, $0) } } ?? 0
                 return meaning + Retrieval.wordScore(question, text)
             }
             let excerpt = Retrieval.excerpt(lines, scores: scores, budget: 1_200)
@@ -238,12 +299,19 @@ actor Pipeline {
         }
         try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.id == id })
         try? modelContext.delete(model: Chunk.self, where: #Predicate { $0.conversationID == optional })
+        // What was learnt from it goes with it.
+        try? modelContext.delete(model: Fact.self, where: #Predicate { $0.conversationID == optional })
+        unremembered[id] = nil
         try? modelContext.save()
     }
 
     func deleteEverything() {
+        wiped += 1
+        toFollow = []
+        unremembered = [:]
         try? modelContext.delete(model: Fact.self)
         Learned.forget()
+        UserDefaults.standard.removeObject(forKey: "declinedNames")
         try? modelContext.delete(model: Conversation.self)
         try? modelContext.delete(model: Chunk.self)
         try? modelContext.delete(model: ActionItem.self)
@@ -259,21 +327,31 @@ actor Pipeline {
 
     /// Brings a conversation's notes up to date once enough new talk has built up (or [force]:
     /// it's over), so recaps, lists and answers see the whole of it.
-    private func remember(_ c: Conversation, force: Bool = false) async {
-        guard Brain.notReadyReason == nil, let new = unremembered[c.id], !new.isEmpty else { return }
+    private func remember(_ id: UUID, force: Bool = false) async {
+        guard Brain.notReadyReason == nil, let new = unremembered[id], !new.isEmpty else { return }
         // About a minute of talk at a time: often enough to keep up, rarely enough to spare the battery.
         guard force || new.split(whereSeparator: \.isWhitespace).count >= 120 else { return }
-        unremembered[c.id] = nil
-        let prompt = Prompts.memory(c.memory, new: new)
-        guard let notes = await withDeadline(40, { await Log.attempt("Conversation notes", { try await Brain.remember(prompt) }) }) else { return }
+        guard let before = conversation(id) else { unremembered[id] = nil; return }
+        let prompt = Prompts.memory(before.memory, new: new)
+        unremembered[id] = nil
+        guard let notes = await withDeadline(40, { await Log.attempt("Conversation notes", { try await Brain.remember(prompt) }) }) else {
+            // Not lost: tried again with the next lot (iOS limits how much AI an app does in the background).
+            unremembered[id] = String([new, unremembered[id]].compactMap { $0 }.joined(separator: "\n").suffix(6_000))
+            return
+        }
+        guard let c = conversation(id) else { return }
         c.memory = notes
         try? modelContext.save()
     }
 
     /// Facts known from other days that bear on [text].
     private func relevantFacts(to text: String, limit: Int = 5) -> [String] {
-        let facts = ((try? modelContext.fetch(FetchDescriptor<Fact>(sortBy: [SortDescriptor(\.created, order: .reverse)]))) ?? []).map(\.text)
-        return KnownFacts.relevant(facts, to: text, limit: limit)
+        let facts = (try? modelContext.fetch(FetchDescriptor<Fact>(sortBy: [SortDescriptor(\.created, order: .reverse)]))) ?? []
+        let chosen = Set(KnownFacts.relevant(facts.map(\.text), to: text, limit: limit))
+        // With when each was noted, so "next Friday" from a month ago isn't taken as this week's.
+        return facts.filter { chosen.contains($0.text) }.prefix(limit).map {
+            "\($0.text) (noted \($0.created.formatted(.dateTime.day().month(.abbreviated))))"
+        }
     }
 
     /// For the top of a prompt about the latest conversation: its notes and the facts that bear on it.
@@ -287,13 +365,14 @@ actor Pipeline {
     }
 
     /// Picks out facts worth keeping after today, once a conversation's over.
-    private func learnFacts(from c: Conversation) async {
-        guard Brain.notReadyReason == nil, c.transcript.split(whereSeparator: \.isWhitespace).count >= 30 else { return }
+    private func learnFacts(from id: UUID) async {
+        guard Brain.notReadyReason == nil, let c = conversation(id), c.transcript.split(whereSeparator: \.isWhitespace).count >= 30 else { return }
         let known = ((try? modelContext.fetch(FetchDescriptor<Fact>())) ?? []).map(\.text)
         let prompt = Prompts.lastingFacts(transcript: c.transcript, known: KnownFacts.relevant(known, to: c.transcript, limit: 15))
-        guard let found = await withDeadline(40, { await Log.attempt("Lasting facts", { try await Brain.lastingFacts(prompt) }) }) else { return }
+        guard let found = await withDeadline(40, { await Log.attempt("Lasting facts", { try await Brain.lastingFacts(prompt) }) }),
+              conversation(id) != nil else { return }
         let fresh = KnownFacts.fresh(found, known: known).prefix(5)
-        for f in fresh { modelContext.insert(Fact(text: f, conversationID: c.id)) }
+        for f in fresh { modelContext.insert(Fact(text: f, conversationID: id)) }
         if !fresh.isEmpty {
             try? modelContext.save()
             Log.info("Learnt \(fresh.count) lasting fact(s)")
@@ -310,35 +389,39 @@ actor Pipeline {
     /// When a conversation's over, it's heard again as a whole: the voices told apart across all
     /// of it at once (steadier than recording by recording, where a short snippet can be put
     /// down to the wrong person), and the words transcribed with all the context around them.
-    /// It replaces the first transcript only if it's sound, then misheard words are fixed again.
-    /// The audio is deleted afterwards either way.
-    private func secondPass(_ c: Conversation) async {
-        let cid: UUID? = c.id
+    /// It replaces the first transcript only if it's sound and nothing changed it meanwhile (you
+    /// naming a voice or fixing a word), then misheard words are fixed again. The audio is
+    /// deleted afterwards either way.
+    private func secondPass(_ id: UUID) async {
+        defer { forgetAudio(of: id) }
+        guard Self.hearAgain, let c = conversation(id), c.userEdited != true else { return }
+        let cid: UUID? = id
         let chunks = (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == cid && $0.status == "done" },
                                                                      sortBy: [SortDescriptor(\.start)]))) ?? []
-        defer {
-            for chunk in chunks {
-                if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
-                chunk.path = nil
-            }
-            try? modelContext.save()
-        }
+        let recordings = chunks.compactMap { chunk in chunk.path.map { (url: URL(fileURLWithPath: $0), recorded: chunk.start) } }
         let length = chunks.reduce(0.0) { $0 + $1.end.timeIntervalSince($1.start) }
-        guard Self.hearAgain, c.userEdited != true, chunks.count >= 2, length <= Self.hearAgainLimit,
-              chunks.allSatisfy({ $0.path.map { FileManager.default.fileExists(atPath: $0) } ?? false }) else { return }
+        guard chunks.count >= 2, recordings.count == chunks.count, length <= Self.hearAgainLimit,
+              recordings.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }) else { return }
+        let before = c.transcript
         let started = Date()
-        let url = Recorder.audioDirectory.appendingPathComponent("whole_\(c.id.uuidString).wav")
+        let url = Recorder.audioDirectory.appendingPathComponent("whole_\(id.uuidString).wav")
         defer { try? FileManager.default.removeItem(at: url) }
-        guard let joined = Self.join(chunks.map { (url: URL(fileURLWithPath: $0.path!), recorded: $0.start) }, into: url) else { return }
-        async let heardVoices = withDeadline(60 + joined.length) { await VoiceEngine.shared.split(url) }
+        guard let joined = Self.join(recordings, into: url) else { return }
+        // Its own voice models, so recordings being made now aren't kept waiting behind it.
+        async let heardVoices = withDeadline(60 + joined.length) { await VoiceEngine.whole.split(url) }
         let words = await withDeadline(30 + 1.5 * joined.length) { () -> [SpeakerAlign.Word]? in
             do { return try await SpeechEngine.shared.words(url) } catch {
                 Log.error("Couldn't transcribe the whole conversation again", error)
                 return nil
             }
         }
-        guard let words, !words.isEmpty, let split = await heardVoices else {
+        let split = await heardVoices
+        guard let words, !words.isEmpty, let split else {
             Log.info("Hearing the conversation again didn't finish, so it's kept as it was")
+            return
+        }
+        guard let now = conversation(id), now.transcript == before, now.userEdited != true else {
+            Log.info("The conversation changed while it was being heard again, so it's kept as it is")
             return
         }
         var heard: [Voiceprint] = []
@@ -350,21 +433,26 @@ actor Pipeline {
             return text.isEmpty ? nil : Utterance(start: joined.time(at: s.start), speaker: s.speaker, text: text)
         }
         let transcript = TranscriptFormat.lines(utterances)
-        guard JoinedAudio.accept(old: c.transcript, new: transcript) else {
+        guard JoinedAudio.accept(old: before, new: transcript) else {
             Log.info("Heard the conversation again, but the result didn't look right, so it's kept as it was")
             return
         }
-        let before = Set(Labels.speakers(in: c.transcript)).count
-        c.transcript = transcript
-        c.voiceprints = heard
+        let voicesBefore = Set(Labels.speakers(in: before)).count
+        now.transcript = transcript
+        now.voiceprints = heard
         try? modelContext.save()
-        Log.info("Heard a \(Int(joined.length / 60)) min conversation again as a whole: \(Set(labels.values).count) voices (was \(before)), \(String(format: "%.0f", Date().timeIntervalSince(started))) s")
-        // Misheard words fixed again, a few lines at a time, starting with what it doubted.
+        Log.info("Heard a \(Int(joined.length / 60)) min conversation again as a whole: \(Set(labels.values).count) voices (was \(voicesBefore)), \(String(format: "%.0f", Date().timeIntervalSince(started))) s")
+        // Misheard words fixed again: the stretches with words the recogniser doubted.
         guard Brain.notReadyReason == nil else { return }
-        let doubts = Doubts.of(words), protected = Doubts.protected(words)
+        let doubts = Doubts.of(words, limit: 60), protected = Doubts.protected(words)
+        let doubted = Set(doubts.map(\.word))
         let lines = transcript.split(separator: "\n").map(String.init)
         for start in stride(from: 0, to: lines.count, by: 12) {
-            _ = await correctMisheard(lines[start..<min(start + 12, lines.count)].joined(separator: "\n"), in: c, doubts: doubts, protected: protected)
+            let group = lines[start..<min(start + 12, lines.count)].joined(separator: "\n")
+            let groupWords = Set(group.split(whereSeparator: \.isWhitespace).map { Doubts.normal(String($0)) })
+            guard !groupWords.isDisjoint(with: doubted) else { continue }
+            let mentioned = doubts.filter { groupWords.contains($0.word) }
+            _ = await correctMisheard(group, in: id, doubts: mentioned, protected: protected)
         }
     }
 
@@ -399,14 +487,18 @@ actor Pipeline {
 
     // MARK: - Fixing words
 
-    /// You fixed a line: it's changed, and what you changed is learnt for next time.
-    func fixLine(in id: UUID, original: String, text typed: String) async {
+    /// You fixed a line: it's changed, and what you changed is learnt for next time. Found by its
+    /// words, or (if the AI tidied it meanwhile) by its time and speaker. False if it's gone.
+    func fixLine(in id: UUID, original: String, text typed: String) async -> Bool {
         let new = typed.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        guard !new.isEmpty, let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first,
-              let range = c.transcript.range(of: original) else { return }
-        let old = Corrections.text(of: original)
-        guard old != new else { return }
-        c.transcript.replaceSubrange(range, with: Corrections.prefix(of: original) + new)
+        guard !new.isEmpty, let c = conversation(id) else { return false }
+        var lines = c.transcript.components(separatedBy: "\n")
+        let prefix = Corrections.prefix(of: original)
+        guard let i = lines.firstIndex(of: original) ?? (prefix.isEmpty ? nil : lines.firstIndex { $0.hasPrefix(prefix) }) else { return false }
+        let old = Corrections.text(of: lines[i])
+        guard old != new else { return true }
+        lines[i] = Corrections.prefix(of: lines[i]) + new
+        c.transcript = lines.joined(separator: "\n")
         let pairs = Fixes.pairs(from: old, to: new)
         Learned.add(pairs)
         c.fixes = Fixes.learn(pairs, into: c.fixes, limit: 100)
@@ -414,7 +506,8 @@ actor Pipeline {
         try? modelContext.save()
         Log.info("You fixed \(pairs.count) word(s) in a line")
         await refreshVocabulary()
-        await suggest(for: c, found: ruleActions(c))
+        if let fresh = conversation(id) { await suggest(for: fresh, found: ruleActions(fresh)) }
+        return true
     }
 
     // MARK: - Naming voices
@@ -555,37 +648,40 @@ actor Pipeline {
         while !toFollow.isEmpty {
             let next = toFollow.removeFirst()
             let id = next.id
-            guard let c = (try? modelContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id })))?.first else { continue }
-            let text = await correctMisheard(next.text, in: c, doubts: next.doubts, protected: next.protected)
-            unremembered[c.id] = [unremembered[c.id], text].compactMap { $0 }.joined(separator: "\n")
-            await remember(c)
+            guard conversation(id) != nil else { continue }
+            let text = await correctMisheard(next.text, in: id, doubts: next.doubts, protected: next.protected)
+            unremembered[id] = [unremembered[id], text].compactMap { $0 }.joined(separator: "\n")
+            await remember(id)
+            guard let c = conversation(id) else { continue }
             let before = c.transcript.hasSuffix(text) ? String(c.transcript.dropLast(text.count)) : ""
             let prompt = Threads.prompt(c.threads, recent: before, new: text)
-            guard let change = await withDeadline(40, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }) else { continue }
-            c.threads = Threads.apply(change, to: c.threads, from: next.from, to: next.to)
+            guard let change = await withDeadline(40, { await Log.attempt("Thread map", { try await Brain.topic(prompt) }) }),
+                  let fresh = conversation(id) else { continue }
+            fresh.threads = Threads.apply(change, to: fresh.threads, from: next.from, to: next.to)
             try? modelContext.save()
-            await showTrail(of: c)
+            await showTrail(of: fresh)
         }
     }
 
     /// "Bucked the back room" → "booked": the AI fixes words the recogniser misheard, from
     /// context, starting with the ones it doubted, and knowing the names and words you use and
     /// the mistakes you've corrected before. A fix is only kept if it changes a few words, leaves
-    /// the rest as said, and doesn't touch a word the recogniser was sure of.
-    private func correctMisheard(_ text: String, in c: Conversation, doubts: [Doubt], protected: Set<String>) async -> String {
+    /// the rest as said, and doesn't touch a word the recogniser was sure of (unless it's one
+    /// you've corrected before).
+    private func correctMisheard(_ text: String, in id: UUID, doubts: [Doubt], protected: Set<String>) async -> String {
         let lines = text.split(separator: "\n").map(String.init)
+        guard !lines.isEmpty, let first = conversation(id), first.transcript.contains(text) else { return text }
         let known = await SpeechEngine.shared.expectedWords()
         let learned = Learned.fixes
-        guard !lines.isEmpty, c.transcript.contains(text),
-              let proposed = await withDeadline(30, { await Log.attempt("Correcting misheard words", {
+        let guarded = protected.subtracting(learned.flatMap { $0.heard.split(separator: " ").map(String.init) })
+        guard let proposed = await withDeadline(30, { await Log.attempt("Correcting misheard words", {
                   try await Brain.correct(lines, doubts: doubts, known: known, learned: learned)
-              }) })
-        else { return text }
-        let fixedLines = Corrections.apply(proposed, to: lines, protected: protected)
+              }) }),
+              let c = conversation(id), c.transcript.contains(text) else { return text }
+        let fixedLines = Corrections.apply(proposed, to: lines, protected: guarded)
         let fixed = fixedLines.joined(separator: "\n")
         guard fixed != text else { return text }
         c.transcript = c.transcript.replacingOccurrences(of: text, with: fixed)
-        c.fixes = Fixes.learn(Corrections.changes(from: lines, to: fixedLines), into: c.fixes, limit: 100)
         try? modelContext.save()
         Log.info("Corrected misheard words in \(zip(lines, fixedLines).filter { $0.0 != $0.1 }.count) line(s)")
         await suggest(for: c, found: ruleActions(c))
@@ -623,41 +719,47 @@ actor Pipeline {
                                 youOnly: c.transcript.contains("] \(Labels.me): "))
     }
 
-    private func summarise(_ c: Conversation) async {
-        await secondPass(c)
-        guard Brain.notReadyReason == nil else {
+    /// A conversation that's over: heard again as a whole, then its title, summary, list items
+    /// and lasting facts. Each step fetches it afresh, as you may have deleted it meanwhile.
+    private func summarise(_ id: UUID) async {
+        guard let c = conversation(id) else { return }
+        // Over: nothing more joins it, even while it's being heard again and summarised.
+        if !c.closed {
             c.closed = true
             try? modelContext.save()
+        }
+        await secondPass(id)
+        guard Brain.notReadyReason == nil, let c = conversation(id) else { return }
+        c.threads = Threads.close(c.threads)
+        try? modelContext.save()
+        await remember(id, force: true)
+        guard let c = conversation(id) else { return }
+        let background = Prompts.background(memory: c.memory, facts: relevantFacts(to: c.memory.text() + " " + Prompts.tail(c.transcript, budget: 400), limit: 4))
+        let transcript = c.transcript
+        guard let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript, background: background) }) }) else {
+            // Too long, or the model declined: the conversation's kept, untitled.
+            Log.error("Couldn't summarise a \(transcript.count)-character conversation")
             return
         }
-        c.threads = Threads.close(c.threads)
-        await remember(c, force: true)
-        let background = Prompts.background(memory: c.memory, facts: relevantFacts(to: c.memory.text() + " " + Prompts.tail(c.transcript, budget: 400), limit: 4))
-        do {
-            let transcript = c.transcript
-            guard let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript, background: background) }) })
-            else { throw StepTimedOut(what: "summarising") }
-            c.title = notes.title
-            c.summary = notes.points.map { "\u{2022} " + $0 }.joined(separator: "\n")
-            c.closed = true
-            try? modelContext.save()
-            let lines = ActionRules.candidateLines(c.transcript)
-            guard !lines.isEmpty else { return }
-            let recent = Array(lines.suffix(60)), start = c.start
-            let notesOnly = Prompts.background(memory: c.memory, facts: [])
-            guard let found = await withDeadline(60, { await Log.attempt("List items", { try await Brain.actions(lines: recent, start: start, background: notesOnly) }) })
-            else { throw StepTimedOut(what: "finding list items") }
-            let fromModel = ActionRules.fromModel(
-                buy: found.buy, todo: found.todo,
-                events: found.appointments.map { ($0.what, $0.when, $0.place, $0.booked) }, conversationStart: c.start, lines: recent)
-            await suggest(for: c, found: ActionRules.merge(fromModel, ruleActions(c)))
-            await learnFacts(from: c)
-        } catch {
-            // Too long, or the model declined: keep the conversation, untitled.
-            Log.error("Couldn't summarise a \(c.transcript.count)-character conversation", error)
-            c.closed = true
-            try? modelContext.save()
+        guard let c = conversation(id) else { return }
+        c.title = notes.title
+        c.summary = notes.points.map { "\u{2022} " + $0 }.joined(separator: "\n")
+        try? modelContext.save()
+        await learnFacts(from: id)
+        guard let c = conversation(id) else { return }
+        let lines = ActionRules.candidateLines(c.transcript)
+        guard !lines.isEmpty else { return }
+        let recent = Array(lines.suffix(60)), start = c.start
+        let notesOnly = Prompts.background(memory: c.memory, facts: [])
+        guard let found = await withDeadline(60, { await Log.attempt("List items", { try await Brain.actions(lines: recent, start: start, background: notesOnly) }) }) else {
+            Log.error("Couldn't find list items in a conversation")
+            return
         }
+        guard let c = conversation(id) else { return }
+        let fromModel = ActionRules.fromModel(
+            buy: found.buy, todo: found.todo,
+            events: found.appointments.map { ($0.what, $0.when, $0.place, $0.booked) }, conversationStart: c.start, lines: recent)
+        await suggest(for: c, found: ActionRules.merge(fromModel, ruleActions(c)))
     }
 
     /// Suggests what's new: not on the list already, and not already suggested from this conversation.

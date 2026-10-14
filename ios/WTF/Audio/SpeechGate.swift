@@ -21,7 +21,14 @@ final class SpeechGate: @unchecked Sendable {
     private var updated = Date.distantPast
     private var ready = false
     private var window: [Float] = []
-    private var input: AsyncStream<[Float]>.Continuation?
+    /// Near-silence was skipped since the last window judged: the detector starts afresh.
+    private var skipped = false
+    private var input: AsyncStream<Window>.Continuation?
+
+    private struct Window: Sendable {
+        var samples: [Float]
+        var fresh: Bool
+    }
     private var worker: Task<Void, Never>?
 
     @discardableResult
@@ -35,7 +42,7 @@ final class SpeechGate: @unchecked Sendable {
 
     /// Loads the model (downloading it the first time) and starts judging what it's given.
     func start() {
-        let (stream, continuation) = AsyncStream<[Float]>.makeStream(bufferingPolicy: .bufferingNewest(8))
+        let (stream, continuation) = AsyncStream<Window>.makeStream(bufferingPolicy: .bufferingNewest(8))
         let begun = locked { () -> Bool in
             guard worker == nil else { return false }
             input = continuation
@@ -48,10 +55,21 @@ final class SpeechGate: @unchecked Sendable {
                 var state = await manager.makeStreamState()
                 self?.locked { self?.ready = true }
                 Log.info("Speech detector ready")
-                for await samples in stream {
-                    let result = try await manager.processStreamingChunk(samples, state: state)
-                    state = result.state
-                    self?.set(result.probability)
+                var failures = 0
+                for await window in stream {
+                    if window.fresh { state = await manager.makeStreamState() }
+                    do {
+                        let result = try await manager.processStreamingChunk(window.samples, state: state)
+                        state = result.state
+                        self?.set(result.probability)
+                        failures = 0
+                    } catch {
+                        // One bad moment isn't the end of it; many in a row, and loudness takes over.
+                        failures += 1
+                        state = await manager.makeStreamState()
+                        if failures == 1 { Log.error("The speech detector stumbled", error) }
+                        if failures >= 20 { throw error }
+                    }
                 }
             } catch {
                 Log.error("The speech detector isn't available, so speech is told by loudness", error)
@@ -86,8 +104,10 @@ final class SpeechGate: @unchecked Sendable {
         if (sum / Float(samples.count)).squareRoot() < Self.silence {
             probability = 0
             updated = Date()
+            skipped = true
         } else {
-            input.yield(samples)
+            input.yield(Window(samples: samples, fresh: skipped))
+            skipped = false
         }
     }
 

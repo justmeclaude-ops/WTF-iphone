@@ -46,7 +46,8 @@ enum PersonalWords {
                     checker.rangeOfMisspelledWord(in: w, range: NSRange(location: 0, length: (w as NSString).length),
                                                   startingAt: 0, wrap: false, language: "en_GB").location != NSNotFound
                 }
-                return all.filter(unusual) + all.filter { !unusual($0) }
+                let flags = all.map(unusual)
+                return zip(all, flags).filter { $0.1 }.map(\.0) + zip(all, flags).filter { !$0.1 }.map(\.0)
             }
         }
         let words = Array(names.prefix(60)) + calendarWords()

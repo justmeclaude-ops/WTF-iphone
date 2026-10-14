@@ -242,8 +242,9 @@ struct ConversationView: View {
     /// The line being fixed, and its words as they're being edited.
     @State private var fixing: String?
     @State private var fixedText = ""
-    /// "Is Speaker 2 Sarah?" suggestions turned down.
+    /// "Is Speaker 2 Sarah?" suggestions turned down, and the ones worked out (off the main path).
     @AppStorage("declinedNames") private var declined = ""
+    @State private var hints: [NameHints.Hint] = []
 
     var body: some View {
         List {
@@ -322,14 +323,20 @@ struct ConversationView: View {
         } message: {
             Text("WTF will recognise their voice from now on, here and in your other conversations.")
         }
+        .task(id: conversation.transcript) {
+            hints = hasUnnamedVoices ? NameHints.suggest(conversation.transcript, isName: NameCheck.isName) : []
+        }
         .sheet(isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } })) {
             FixWordsSheet(text: $fixedText) { save in
                 if save, let line = fixing {
                     let id = conversation.id, typed = fixedText
                     Task {
-                        await model.pipeline.fixLine(in: id, original: line, text: typed)
-                        saved += 1
-                        note = "Fixed. WTF will catch that next time."
+                        if await model.pipeline.fixLine(in: id, original: line, text: typed) {
+                            saved += 1
+                            note = "Fixed. WTF will catch that next time."
+                        } else {
+                            note = "That line changed while you were fixing it, so nothing was changed. Try again."
+                        }
                     }
                 }
                 fixing = nil
@@ -355,9 +362,8 @@ struct ConversationView: View {
 
     /// Names for unnamed voices from how people were addressed, minus any turned down.
     private var nameHints: [NameHints.Hint] {
-        guard hasUnnamedVoices else { return [] }
         let no = Set(declined.split(separator: "\n").map(String.init))
-        return NameHints.suggest(conversation.transcript, isName: NameCheck.isName).filter { !no.contains(key($0)) }
+        return hints.filter { !no.contains(key($0)) && Labels.speakers(in: conversation.transcript).contains($0.label) }
     }
 
     private func key(_ hint: NameHints.Hint) -> String { "\(conversation.id.uuidString)|\(hint.label)|\(hint.name)" }

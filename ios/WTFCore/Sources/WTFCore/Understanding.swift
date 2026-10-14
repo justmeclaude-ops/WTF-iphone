@@ -25,18 +25,27 @@ public struct ConversationMemory: Codable, Equatable, Sendable {
     }
 
     public static let empty = ConversationMemory()
+
+    static let detail = Rx(#"\b(\d+(?:[:.]\d+)?(?:am|pm|st|nd|rd|th)?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|tonight|today|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b"#)
+
+    /// The dates, times and numbers in a note.
+    static func details(_ note: String) -> Set<String> { Set(detail.all(note).map { $0[0].lowercased() }) }
     public var isEmpty: Bool { [people, decided, suggested, todo, facts, open].allSatisfy(\.isEmpty) }
 
-    /// Tidied: trimmed, no blanks or repeats, each list kept short, each note under 20 words.
-    public func cleaned(perList: Int = 8) -> ConversationMemory {
+    /// Tidied: trimmed, no blanks or repeats, each list kept short (the newest), each note at most
+    /// 16 words. Notes that differ in a date, a time or a number aren't repeats: "Sunday at 7" may
+    /// be the correction of "Saturday at 7".
+    public func cleaned(perList: Int = 6) -> ConversationMemory {
         func tidy(_ list: [String]) -> [String] {
             var seen: [String] = []
             for raw in list {
                 var t = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "-\u{2022}*")))
-                t = t.split(separator: " ").prefix(20).joined(separator: " ")
+                t = t.split(separator: " ").prefix(16).joined(separator: " ")
                 let l = t.lowercased()
-                guard !t.isEmpty, !["none", "n/a", "nothing", "unknown"].contains(l),
-                      !seen.contains(where: { ActionRules.similar($0, t) && abs($0.count - t.count) < 12 }) else { continue }
+                guard !t.isEmpty, !["none", "n/a", "nothing", "unknown"].contains(l) else { continue }
+                if let i = seen.firstIndex(where: { $0.lowercased() == l || (ActionRules.similar($0, t) && Self.details($0) == Self.details(t)) }) {
+                    seen.remove(at: i) // the later wording, kept in its later place
+                }
                 seen.append(t)
             }
             return Array(seen.suffix(perList))
@@ -64,7 +73,7 @@ extension Prompts {
         \(before.isEmpty ? "(none yet)" : before.text())
 
         New lines:
-        \(tail(TranscriptFormat.compact(lines), budget: 1_100))
+        \(tail(TranscriptFormat.compact(lines), budget: 900))
 
         Update the notes with the new lines and give them back in full: keep what's still true, add what's \
         new, move a suggestion to decided only if it was agreed, and drop anything that turned out wrong. Keep \
@@ -72,10 +81,16 @@ extension Prompts {
         """
     }
 
-    /// A conversation's memory and the facts known from other days, for the top of a prompt.
-    public static func background(memory: ConversationMemory?, facts: [String]) -> String {
+    /// A conversation's memory and the facts known from other days, for the top of a prompt:
+    /// at most about [budget] tokens of notes (the newest), so the transcript still has room.
+    public static func background(memory: ConversationMemory?, facts: [String], budget: Int = 450) -> String {
         var out = ""
-        if let memory, !memory.isEmpty { out += "Notes on this conversation so far:\n" + memory.text() + "\n\n" }
+        if let memory, !memory.isEmpty {
+            var text = memory.text()
+            for n in [5, 4, 3, 2, 1] where tokens(text) > budget { text = memory.cleaned(perList: n).text() }
+            if tokens(text) > budget { text = String(text.prefix(budget * 4)) }
+            out += "Notes on this conversation so far:\n" + text + "\n\n"
+        }
         if !facts.isEmpty { out += "Things I know from other days:\n" + facts.map { "- " + $0 }.joined(separator: "\n") + "\n\n" }
         return out
     }
@@ -84,11 +99,24 @@ extension Prompts {
 /// Facts worth keeping beyond the day they were said ("Mum's birthday is 2 November"): kept in
 /// a list you can see and edit, and given to the AI when they're relevant.
 public enum KnownFacts {
-    /// The facts that share the most words with [text], at most [limit], best first.
+    static let common: Set<String> = [
+        "i", "it", "is", "wa", "were", "are", "am", "be", "been", "do", "did", "doe", "done", "have", "ha", "had", "what", "where",
+        "when", "who", "why", "how", "which", "that", "thi", "there", "their", "they", "them", "he", "she", "hi", "her", "him",
+        "we", "our", "you", "your", "me", "about", "just", "so", "but", "if", "then", "than", "not", "no", "yes", "can", "will",
+        "would", "should", "could", "get", "got", "go", "going", "say", "said", "know", "think", "really", "very", "thing", "one",
+        "all", "out", "up", "now", "like", "well", "yeah", "okay", "ok", "right", "need", "want", "make", "time", "day", "week",
+    ]
+
+    /// Words that say what something's about: three letters or more, not the everyday ones.
+    static func content(_ s: String) -> Set<String> {
+        ActionRules.words(s).filter { $0.count >= 3 && !common.contains($0) }
+    }
+
+    /// The facts that share the most meaningful words with [text], at most [limit], best first.
     public static func relevant(_ facts: [String], to text: String, limit: Int = 6) -> [String] {
-        let want = ActionRules.words(text)
+        let want = content(text)
         guard !want.isEmpty else { return [] }
-        return facts.map { ($0, ActionRules.words($0).intersection(want).count) }
+        return facts.map { ($0, content($0).intersection(want).count) }
             .filter { $0.1 > 0 }
             .sorted { $0.1 > $1.1 }
             .prefix(limit).map(\.0)
@@ -128,11 +156,24 @@ public enum NameHints {
         public var times: Int
     }
 
-    static let greeting = #"(?:(?i:hi|hey|hiya|hello|thanks|thank you|cheers|oh|right|so|well|yes|yeah|no|okay|ok|sorry|morning|night|bye|ta)[,!]?\s+)?"#
-    /// Addressed at the start of a sentence: "Sarah, what do you think?", "Thanks Sarah, that's lovely."
-    static let opening = Rx("^" + greeting + #"([A-Z][a-z]{1,15})(?:[,!?.]|\s*$)"#, caseSensitive: true)
-    /// Addressed at the end: "Thanks, Sarah.", "What do you reckon, Tom?"
+    static let greeting = #"(?i:hi|hey|hiya|hello|thanks|thank you|cheers|morning|night|bye|ta|sorry|oh|right|yes|yeah|no|okay|ok|well|so)"#
+    /// "Thanks, Sarah." / "Hi Tom!" at the start of a sentence: a greeting, then the name.
+    static let greeted = Rx("^" + greeting + #"[,!]?\s+([A-Z][a-z]{1,15})\s*[,!?.]"#, caseSensitive: true)
+    /// "Sarah, what do you think?": the name, a comma, and more.
+    static let called = Rx(#"^([A-Z][a-z]{1,15}),\s+\S"#, caseSensitive: true)
+    /// "What do you reckon, Tom?": a comma, the name, the end.
     static let closing = Rx(#",\s+([A-Z][a-z]{1,15})\s*([.!?])?\s*$"#, caseSensitive: true)
+
+    /// Words people start sentences with or call each other that aren't anyone's name.
+    static let notNames: Set<String> = [
+        "Sorry", "Right", "Well", "So", "Look", "Listen", "Okay", "Ok", "Yeah", "Yes", "No", "Oh", "Hey", "Hi", "Hello", "Thanks",
+        "Cheers", "Great", "Cool", "Nice", "Perfect", "Brilliant", "Lovely", "Fine", "Sure", "Honestly", "Seriously", "Basically",
+        "Anyway", "Actually", "Obviously", "Literally", "Exactly", "Absolutely", "Totally", "Definitely", "Wait", "Now", "Then",
+        "Also", "But", "And", "Because", "Mate", "Guys", "Everyone", "Everybody", "Folks", "Man", "Dude", "Bro", "Love", "Darling",
+        "Babe", "Sweetheart", "Honey", "Hun", "Pal", "Buddy", "Boss", "Sir", "Madam", "God", "Jesus", "Please", "Morning", "Night",
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "January", "February", "March", "April",
+        "June", "July", "August", "September", "October", "November", "December", "Christmas", "Easter", "English", "British",
+    ]
 
     /// - Parameter isName: whether a word is a person's name (on the phone, Apple's name tagger).
     public static func suggest(_ transcript: String, isName: (String) -> Bool) -> [Hint] {
@@ -142,15 +183,15 @@ public enum NameHints {
         let named = Set(turns.map(\.who).filter { Labels.number($0) == nil })
         var counts: [String: [String: Int]] = [:]
         func credit(_ label: String, _ name: String) {
-            guard Labels.number(label) != nil, !named.contains(name), isName(name) else { return }
+            guard Labels.number(label) != nil, !named.contains(name), !notNames.contains(name), isName(name) else { return }
             counts[label, default: [:]][name, default: 0] += 1
         }
         for (i, turn) in turns.enumerated() {
             let previous = turns[..<i].last { $0.who != turn.who }?.who
             let next = turns[(i + 1)...].first { $0.who != turn.who }?.who
             for sentence in Rx(#"(?<=[.?!])\s+"#).split(turn.text) {
-                let found = [opening.first(sentence), closing.first(sentence)].compactMap { $0 }
-                    .map { $0[1] }.first { isName($0) }
+                let found = [greeted.first(sentence), called.first(sentence), closing.first(sentence)].compactMap { $0 }
+                    .map { $0[1] }.first { !notNames.contains($0) && isName($0) }
                 guard let name = found else { continue }
                 // A question goes to whoever answers it; anything else to whoever spoke before.
                 let asked = sentence.trimmingCharacters(in: .whitespaces).hasSuffix("?")
@@ -185,29 +226,42 @@ public enum CalendarCheck {
         case differs(String)
     }
 
-    /// What the calendar says about [title] at [start], if it has it within a fortnight.
+    /// What the calendar says about [title] at [start], if it has the same thing within a fortnight.
+    /// "The same thing" means sharing a word that says what it is ("dentist", "MOT", "Sarah"), not
+    /// just "dinner" or "appointment": "Dinner with Tom" isn't "Dinner with Sarah".
     public static func check(title: String, start: Date, allDay: Bool, against entries: [Entry], calendar: Calendar = .current) -> Result? {
+        let heard = significant(title)
+        guard !heard.isEmpty else { return nil }
         let matches = entries.filter { e in
-            abs(e.start.timeIntervalSince(start)) <= 14 * 86_400 && (ActionRules.similar(e.title, title) || ActionRules.overlap(e.title, title) >= 1 && significant(e.title, title))
+            abs(e.start.timeIntervalSince(start)) <= 14 * 86_400 && !significant(e.title).isDisjoint(with: heard)
         }
         guard !matches.isEmpty else { return nil }
         let sameDay = matches.filter { calendar.isDate($0.start, inSameDayAs: start) }
-        if sameDay.contains(where: { allDay || $0.allDay || abs($0.start.timeIntervalSince(start)) <= 90 * 60 }) { return .alreadyThere }
+        let already = sameDay.contains { e in
+            if !allDay && !e.allDay { return abs(e.start.timeIntervalSince(start)) <= 90 * 60 }
+            // No time to compare: only if it's clearly the same thing.
+            return heard.isSubset(of: significant(e.title))
+        }
+        if already { return .alreadyThere }
         let f = DateFormatter()
         f.calendar = calendar; f.timeZone = calendar.timeZone; f.locale = Locale(identifier: "en_GB")
-        if let e = sameDay.first {
+        if let e = sameDay.first(where: { !$0.allDay && !allDay && heard.isSubset(of: significant($0.title)) }) {
             f.dateFormat = "h:mm a"
             return .differs("Your calendar has it at \(f.string(from: e.start).lowercased())")
         }
-        let nearest = matches.min { abs($0.start.timeIntervalSince(start)) < abs($1.start.timeIntervalSince(start)) }!
+        let elsewhere = matches.filter { !calendar.isDate($0.start, inSameDayAs: start) && heard.isSubset(of: significant($0.title)) }
+        guard let nearest = elsewhere.min(by: { abs($0.start.timeIntervalSince(start)) < abs($1.start.timeIntervalSince(start)) }) else { return nil }
         f.dateFormat = nearest.allDay ? "EEEE d MMMM" : "EEEE d MMMM 'at' h:mm a"
         return .differs("Your calendar has it on \(f.string(from: nearest.start).replacingOccurrences(of: "AM", with: "am").replacingOccurrences(of: "PM", with: "pm"))")
     }
 
-    /// Sharing a word that says what it is ("dentist"), not just "appointment".
-    static func significant(_ a: String, _ b: String) -> Bool {
-        let generic: Set<String> = ["appointment", "meeting", "call", "event", "booking", "check", "up", "reminder", "day"]
-        return !ActionRules.words(a).intersection(ActionRules.words(b)).subtracting(generic).isEmpty
+    static let generic: Set<String> = ["appointment", "appt", "meeting", "call", "event", "booking", "check", "up", "reminder", "day",
+                                       "dinner", "lunch", "breakfast", "brunch", "drink", "drinks", "party", "catch", "night", "out",
+                                       "session", "chat", "visit", "trip", "plan", "plans", "time", "date"]
+
+    /// The words that say what something is.
+    static func significant(_ title: String) -> Set<String> {
+        ActionRules.words(title).subtracting(generic).filter { $0.count >= 2 }
     }
 }
 

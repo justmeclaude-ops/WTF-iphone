@@ -68,12 +68,21 @@ final class Recorder: @unchecked Sendable {
     }
 
     static var audioDirectory: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("audio")
+        var dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("audio")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Recordings never go into iCloud or computer backups.
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? dir.setResourceValues(values)
         return dir
     }
 
+    /// One start, restart or stop at a time: the audio route can change from several places at
+    /// once (a setting, AirPods going in, a call ending), and two taps on the microphone crash.
+    private let sessionLock = NSLock()
+
     func start() throws {
+        sessionLock.lock(); defer { sessionLock.unlock() }
         guard !running else { return }
         SpeechGate.shared.start()
         try configureSession()
@@ -84,10 +93,17 @@ final class Recorder: @unchecked Sendable {
     /// Settings › Use AirPods Microphone.
     static var airPodsMic: Bool { UserDefaults.standard.bool(forKey: "airPodsMic") }
     private static let base: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
-    /// What it's recording through, for Diagnostics.
-    private(set) var microphone = "iPhone"
-    /// Headphones found not to record in high quality: not tried again while they're in, or
-    /// switching to them and back would go round in circles.
+    /// What it's recording through, for Diagnostics (no device names: they're usually someone's).
+    var microphone: String {
+        infoLock.lock(); defer { infoLock.unlock() }
+        return _microphone
+    }
+    private let infoLock = NSLock()
+    private var _microphone = "iPhone"
+    private func setMicrophone(_ m: String) { infoLock.lock(); _microphone = m; infoLock.unlock() }
+    /// Headphones found not to record in high quality: not tried again (until the setting's turned
+    /// off and on, or different headphones are used), or switching to them and back would go
+    /// round in circles, and car kits that only do calls would keep switching into a call.
     private var callQualityOnly: String?
 
     /// The audio session, set up to record through the iPhone's microphones, or (if that's turned
@@ -96,8 +112,8 @@ final class Recorder: @unchecked Sendable {
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
         let headphones = session.currentRoute.outputs.first { [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType) }?.portName
-        if headphones == nil { callQualityOnly = nil }
-        if Self.airPodsMic, headphones == nil || headphones != callQualityOnly {
+        let worthTrying = callQualityOnly == nil || (headphones != nil && headphones != callQualityOnly)
+        if Self.airPodsMic, worthTrying {
             var options = Self.base.union([.allowBluetoothHFP, .bluetoothHighQualityRecording])
             if #available(iOS 26.2, *) { options.insert(.farFieldInput) }
             do {
@@ -106,26 +122,28 @@ final class Recorder: @unchecked Sendable {
                 guard let port = session.currentRoute.inputs.first else { return }
                 if let mic = port.bluetoothMicrophoneExtension {
                     if mic.highQualityRecording.isEnabled || mic.farFieldCapture.isEnabled {
-                        microphone = port.portName + (mic.farFieldCapture.isEnabled ? " (high quality, far field)" : " (high quality)")
-                        Log.info("Recording through \(microphone)")
+                        callQualityOnly = nil
+                        setMicrophone(mic.farFieldCapture.isEnabled ? "Headphones (high quality, far field)" : "Headphones (high quality)")
+                        Log.info("Recording through the headphones in high quality")
                         return
                     }
-                    Log.info("\(port.portName) can't record in high quality, so the iPhone's microphone is used")
+                    Log.info("The headphones can't record in high quality, so the iPhone's microphone is used")
                     callQualityOnly = port.portName
                 } else if port.portType != .bluetoothHFP {
-                    // No AirPods in: the iPhone's microphone, ready to switch when they're put in.
-                    microphone = "iPhone"
+                    // No headphones in: the iPhone's microphone, ready to switch when they're put in.
+                    setMicrophone("iPhone")
                     return
                 } else {
+                    Log.info("The Bluetooth device only records in call quality, so the iPhone's microphone is used")
                     callQualityOnly = port.portName
                 }
             } catch {
-                Log.error("Couldn't record through the AirPods", error)
+                Log.error("Couldn't record through the headphones", error)
             }
         }
         try use(Self.base)
         try session.setActive(true)
-        microphone = "iPhone"
+        setMicrophone("iPhone")
     }
 
     private func use(_ options: AVAudioSession.CategoryOptions) throws {
@@ -137,10 +155,12 @@ final class Recorder: @unchecked Sendable {
     /// The microphone setting changed: listening carries on through the right one.
     func microphoneChanged() {
         guard running else { return }
+        sessionLock.lock(); callQualityOnly = nil; sessionLock.unlock()
         resume(why: "on the new microphone setting")
     }
 
     func stop() {
+        sessionLock.lock(); defer { sessionLock.unlock() }
         guard running else { return }
         running = false
         engine.inputNode.removeTap(onBus: 0)
@@ -171,6 +191,9 @@ final class Recorder: @unchecked Sendable {
     }
 
     private func restart() throws {
+        sessionLock.lock(); defer { sessionLock.unlock() }
+        guard running else { return }
+        SpeechGate.shared.start() // in case it stopped
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         do {
@@ -186,7 +209,14 @@ final class Recorder: @unchecked Sendable {
 
     private func installTap() throws {
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        var format = input.outputFormat(forBus: 0)
+        // Mid-switch (AirPods going in or out) the microphone can briefly have no format at all:
+        // a tap then would crash, so wait a moment for it.
+        for _ in 0..<10 where format.sampleRate == 0 || format.channelCount == 0 {
+            Thread.sleep(forTimeInterval: 0.1)
+            format = input.outputFormat(forBus: 0)
+        }
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw NoMicrophone() }
         converter = AVAudioConverter(from: format, to: target)
         // A tenth of a second at a time: few wake-ups, all day.
         input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate / 10), format: format) { [weak self] buffer, _ in
@@ -303,4 +333,9 @@ final class Recorder: @unchecked Sendable {
         if cut { cutAt = now }
         onChunk?(url, chunkStart, end)
     }
+}
+
+/// The microphone had no usable format (it was switching, or something else had it).
+struct NoMicrophone: LocalizedError {
+    var errorDescription: String? { "The microphone isn't available right now" }
 }
