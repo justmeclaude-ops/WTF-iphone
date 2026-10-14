@@ -98,16 +98,22 @@ struct StopListeningSheet: View {
                     model.setListening(false)
                     dismiss()
                 } label: {
+                    // Black on white (white on black in light mode): the app's tint is white, and
+                    // a filled button's own text would be white on white.
                     Label("Stop Listening", systemImage: "stop.fill")
                         .font(.headline)
-                        .frame(maxWidth: .infinity, minHeight: 34)
+                        .foregroundStyle(Color(uiColor: .systemBackground))
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(Capsule().fill(Color.primary))
                 }
-                .buttonStyle(.borderedProminent)
-                Button("What Was I Saying?") {
-                    dismiss()
-                    model.askFromShortcut()
+                .buttonStyle(.plain)
+                if model.hasHeard {
+                    Button("What Was I Saying?") {
+                        dismiss()
+                        model.askFromShortcut()
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
                 Button("Keep Listening") { dismiss() }
                     .foregroundStyle(.secondary)
             }

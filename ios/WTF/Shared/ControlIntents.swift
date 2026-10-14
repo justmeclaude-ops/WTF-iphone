@@ -3,7 +3,8 @@ import AppIntents
 // The actions behind the controls (Control Center, the Lock Screen's corners, the Action button)
 // and the buttons on the Lock Screen card. They're in the app and its widget extension; as Live
 // Activity intents, iOS runs them in the app, which doesn't open. In the extension they're only
-// there to be named, so their bodies there do nothing.
+// there to be named, so their bodies there do nothing. They can't show anything themselves, so
+// the answer goes on the card and the pill (or in a notification when WTF isn't listening).
 
 /// What you were just saying (press again for what came before).
 struct WTFAskControlIntent: LiveActivityIntent, AudioPlaybackIntent {
@@ -14,7 +15,8 @@ struct WTFAskControlIntent: LiveActivityIntent, AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         #if !WIDGET
-        _ = await AppModel.shared.answerFromShortcut()
+        let answer = await AppModel.shared.answerFromShortcut()
+        await AppModel.shared.showAnswer(answer)
         #endif
         return .result()
     }
@@ -44,7 +46,8 @@ struct WTFListControlIntent: LiveActivityIntent, AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         #if !WIDGET
-        _ = await AppModel.shared.listFromShortcut()
+        let answer = await AppModel.shared.listFromShortcut()
+        await AppModel.shared.showAnswer(answer)
         #endif
         return .result()
     }
@@ -60,7 +63,8 @@ struct WTFBeforeControlIntent: LiveActivityIntent, AudioPlaybackIntent {
 
     func perform() async throws -> some IntentResult {
         #if !WIDGET
-        _ = await AppModel.shared.beforeThatFromShortcut()
+        let answer = await AppModel.shared.beforeThatFromShortcut()
+        await AppModel.shared.showAnswer(answer)
         #endif
         return .result()
     }

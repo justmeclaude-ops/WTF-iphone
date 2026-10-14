@@ -52,13 +52,49 @@ struct ListControl: ControlWidget {
     }
 }
 
+/// Under the card's heading, and in the pill when it's held open: the answer to the last press
+/// while it's fresh, otherwise the trail; then the buttons.
+struct CardBody: View {
+    let state: ListeningAttributes.ContentState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let answer = state.answer {
+                Text(answer)
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    if state.earlier {
+                        SmallControl(intent: WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that")
+                    }
+                    SmallControl(intent: WTFListeningControlIntent(), icon: "stop.fill", label: "Stop")
+                }
+            } else {
+                if state.trail.count > 1 { Trail(steps: state.trail) }
+                PillControls(state: state)
+            }
+        }
+    }
+}
+
 /// The controls when you hold the listening pill (and on the Lock Screen card), laid out like
-/// music's: back a step, what was I saying, stop. Each works without opening WTF.
+/// music's: back a step, what was I saying, stop. Each works without opening WTF. Only those with
+/// something to do show: nothing to recap before anything's been heard, nothing to go back to
+/// before there's an earlier topic.
 struct PillControls: View {
+    let state: ListeningAttributes.ContentState
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            control(WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that", size: 46)
-            control(WTFAskControlIntent(), icon: "questionmark", label: "What was I saying?", size: 58)
+            if state.earlier {
+                control(WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that", size: 46)
+            }
+            if state.heard {
+                control(WTFAskControlIntent(), icon: "questionmark", label: "What was I saying?", size: 58)
+            }
             control(WTFListeningControlIntent(), icon: "stop.fill", label: "Stop", size: 46)
         }
         .frame(maxWidth: .infinity)
@@ -75,6 +111,25 @@ struct PillControls: View {
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A smaller button, for under an answer.
+struct SmallControl<I: AppIntent>: View {
+    let intent: I
+    let icon: String
+    let label: String
+
+    var body: some View {
+        Button(intent: intent) {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Capsule().fill(Color.white.opacity(0.16)))
         }
         .buttonStyle(.plain)
     }
@@ -104,10 +159,7 @@ struct ListeningLiveActivity: Widget {
                     Text(s.topic ?? "Listening").font(.headline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if s.trail.count > 1 { Trail(steps: s.trail) }
-                        PillControls().padding(.top, 2)
-                    }
+                    CardBody(state: s).padding(.top, 2)
                 }
             } compactLeading: {
                 RecordingDot().padding(.leading, 2)
@@ -172,8 +224,7 @@ struct LockScreenCard: View {
                     Spacer()
                     Elapsed(since: state.since, font: .subheadline).frame(width: 72, alignment: .trailing)
                 }
-                if state.trail.count > 1 { Trail(steps: state.trail) }
-                PillControls()
+                CardBody(state: state)
             }
             .padding(16)
         }

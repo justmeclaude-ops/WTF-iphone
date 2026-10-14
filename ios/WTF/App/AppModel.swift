@@ -45,6 +45,9 @@ final class AppModel {
     /// When the Action button (or another WTF shortcut or control) was last pressed: for the
     /// setup page's "It works".
     var buttonPressedAt: Date?
+    /// Whether anything's been heard to answer "what was I saying?" from. Until it has, there's
+    /// nothing to say, so the card, the pill and the stop sheet don't offer it.
+    var hasHeard = false
 
     static let quickQuestion = "WTF was I just on about?"
 
@@ -53,6 +56,7 @@ final class AppModel {
         pipeline = Pipeline(modelContainer: container)
         let pipeline = pipeline
         Recorder.shared.onChunk = { url, start, end in
+            Task { @MainActor in AppModel.shared.heardSomething(true) }
             Task {
                 await pipeline.addChunk(url: url, start: start, end: end)
                 await pipeline.run()
@@ -135,6 +139,7 @@ final class AppModel {
             if VoiceEngine.enabled, !VoiceEngine.downloaded {
                 Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } // failures are logged inside
             }
+            heardSomething(await pipeline.conversationCount() > 0)
             // The Lock Screen card first: iOS only lets an app start the microphone from the Lock
             // Screen or the Action button if its card is showing.
             ListeningActivity.shared.start()
@@ -249,6 +254,7 @@ final class AppModel {
         try? await Task.sleep(for: .milliseconds(300))
         await pipeline.deleteEverything()
         container.mainContext.rollback()
+        heardSomething(false)
         try? await Task.sleep(for: .milliseconds(300))
         wiping = false
         if wasListening { setListening(true) }
@@ -307,6 +313,7 @@ final class AppModel {
         }
         try? context.save()
         forgetAsked(about: Set(ids))
+        heardSomething(((try? context.fetchCount(FetchDescriptor<Conversation>())) ?? 0) > 0)
         try? await Task.sleep(for: .milliseconds(500))
         hiding.subtract(keys)
     }
@@ -394,6 +401,27 @@ final class AppModel {
             }
             await answer(Prompts.focused(question: q, notes: found.notes, best: found.best, now: now, background: found.background))
         }
+    }
+
+    /// Whether there's anything to answer "what was I saying?" from (see hasHeard).
+    func heardSomething(_ heard: Bool) {
+        guard hasHeard != heard else { return }
+        hasHeard = heard
+        ListeningActivity.shared.heard(heard)
+    }
+
+    /// An answer from a button with nowhere of its own to show it (the pill's, the Lock Screen
+    /// card's, a control's): it shows on the card and the pill while listening, or as a
+    /// notification if not. It's in Ask too, and read out if headphones are in.
+    func showAnswer(_ answer: String) {
+        if ListeningActivity.shared.showing {
+            ListeningActivity.shared.showAnswer(answer)
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = "WTF"
+        content.body = answer
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "wtf.answer", content: content, trigger: nil))
     }
 
     /// The Action button's (or Siri's, or a control's) answer: kept in Ask, read into your ears if
