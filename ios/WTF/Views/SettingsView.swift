@@ -109,6 +109,7 @@ struct SettingsView: View {
                         \u{2022} A press tells you what you were just on about: read into your ears if AirPods are in, shown at the top of the screen if not.
                         \u{2022} Press again within 20 seconds for what came before: the topic you left hanging, then the one before.
                         \u{2022} If WTF isn\u{2019}t listening, a press starts it (unless you turn that off above).
+                        Rather choose each time? Pick WTF Menu instead: a press shows What Was I Saying, What Came Before, Start or Stop Listening and Read My List.
                         More buttons: add WTF\u{2019}s controls to Control Center, or to the Lock Screen in place of the torch or camera (hold the Lock Screen, Customise, then tap a corner button), for What Was I Saying?, Start or Stop Listening, and Read My List. Or tap the back of the iPhone: Settings › Accessibility › Touch › Back Tap, and choose a WTF shortcut.
                         """)
                 }

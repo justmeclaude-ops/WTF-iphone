@@ -89,6 +89,45 @@ struct ReadMyListIntent: AudioPlaybackIntent {
     }
 }
 
+/// The choices in the WTF Menu.
+enum WTFChoice: String, AppEnum {
+    case saying, before, listening, list
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "WTF"
+    static let caseDisplayRepresentations: [WTFChoice: DisplayRepresentation] = [
+        .saying: DisplayRepresentation(title: "What was I saying?", image: .init(systemName: "questionmark.bubble")),
+        .before: DisplayRepresentation(title: "What came before that?", image: .init(systemName: "arrow.uturn.backward")),
+        .listening: DisplayRepresentation(title: "Start or stop listening", image: .init(systemName: "waveform")),
+        .list: DisplayRepresentation(title: "Read my list", image: .init(systemName: "checklist")),
+    ]
+}
+
+/// A menu: for the Action button (or Back Tap) if you'd rather choose each time than have one
+/// press do the most likely thing. Set a choice when assigning it and it does that straight away.
+struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent {
+    static let title: LocalizedStringResource = "WTF Menu"
+    static let description = IntentDescription("Choose: what you were saying, what came before, listening on or off, or your list.")
+    static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @Parameter(title: "Choice", requestValueDialog: "What do you need?")
+    var choice: WTFChoice?
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let pick: WTFChoice
+        if let choice { pick = choice } else { pick = try await $choice.requestValue("What do you need?") }
+        let answer: String
+        switch pick {
+        case .saying: answer = await AppModel.shared.answerFromShortcut()
+        case .before: answer = await AppModel.shared.beforeThatFromShortcut()
+        case .listening: answer = await AppModel.shared.toggleListeningFromShortcut()
+        case .list: answer = await AppModel.shared.listFromShortcut()
+        }
+        return .result(dialog: "\(answer)")
+    }
+}
+
 struct WTFShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: WhatWasISayingIntent(),
@@ -97,6 +136,8 @@ struct WTFShortcuts: AppShortcutsProvider {
                     shortTitle: "What Was I Saying?", systemImageName: "ear")
         AppShortcut(intent: AskWTFIntent(), phrases: ["Ask \(.applicationName)", "Open \(.applicationName) and ask"],
                     shortTitle: "WTF?", systemImageName: "questionmark.bubble")
+        AppShortcut(intent: WTFMenuIntent(), phrases: ["\(.applicationName) menu", "Open the \(.applicationName) menu"],
+                    shortTitle: "WTF Menu", systemImageName: "list.bullet")
         AppShortcut(intent: ReadMyListIntent(), phrases: ["Read my \(.applicationName) list", "What's on my \(.applicationName) list"],
                     shortTitle: "Read My List", systemImageName: "checklist")
         AppShortcut(intent: StartListeningIntent(), phrases: ["Start \(.applicationName)", "Start \(.applicationName) listening"],

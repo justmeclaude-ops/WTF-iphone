@@ -244,6 +244,28 @@ final class AppModel {
         return answer
     }
 
+    /// "What came before that?" on its own (from the WTF Menu): the next step back each time.
+    func beforeThatFromShortcut() async -> String {
+        if backstory.isEmpty || Date().timeIntervalSince(lastPress) >= 20 {
+            let threads = await pipeline.latestThreads()
+            backstory = Threads.backstory(threads)
+            step = 0
+        }
+        let answer: String
+        if backstory.indices.contains(step) {
+            answer = backstory[step]
+            step += 1
+        } else {
+            answer = backstory.isEmpty ? "Nothing before that: it's all been one topic so far." : "That's as far back as I've got."
+            step = 0
+        }
+        lastPress = Date()
+        messages.append(ChatMessage(fromUser: true, text: "What came before that?"))
+        messages.append(ChatMessage(fromUser: false, text: answer))
+        _ = await ReadAloud.shared.startIntoHeadphones(answer)
+        return answer
+    }
+
     /// Where pressing again goes: the topics before what you were just saying, and how far it's got.
     private var backstory: [String] = []
     private var step = 0
