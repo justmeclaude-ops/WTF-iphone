@@ -107,7 +107,8 @@ struct ListeningLiveActivity: Widget {
             } minimal: {
                 Listening()
             }
-            .widgetURL(URL(string: "wtf://ask"))
+            // A tap on the pill opens WTF to stop listening; holding it shows the buttons.
+            .widgetURL(URL(string: "wtf://listening"))
             .keylineTint(.green)
         }
         .supplementalActivityFamilies([.small])

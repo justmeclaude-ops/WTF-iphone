@@ -35,6 +35,10 @@ final class AppModel {
         }
     }
     var problem: String?
+    /// Tapping the listening pill in the Dynamic Island: the sheet to stop listening.
+    var stopSheet = false
+    /// When listening last started, for that sheet.
+    var listeningSince: Date?
     /// How far a transcription pass has got, while one's running.
     var transcribing: (done: Int, total: Int)?
 
@@ -114,6 +118,7 @@ final class AppModel {
             await LiveTranscriber.shared.start()
             try Recorder.shared.start()
             recording = true
+            listeningSince = Date()
             ListeningActivity.shared.start()
             problem = nil
             UserDefaults.standard.set(true, forKey: "listening")

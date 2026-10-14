@@ -20,9 +20,12 @@ struct WTFApp: App {
                     model.resumeIfNeeded()
                     model.processNow()
                 }
-                // Tapping the Live Activity: "what was I saying?"
+                // Tapping the Lock Screen card: "what was I saying?". Tapping the listening pill in
+                // the Dynamic Island: a sheet to stop (iOS opens the app for a tap on the pill;
+                // holding it shows the Pause button without opening anything).
                 .onOpenURL { url in
                     if url.host == "ask" { model.askFromShortcut() }
+                    if url.host == "listening", model.recording { model.stopSheet = true }
                 }
         }
         .onChange(of: phase) { _, now in
@@ -48,6 +51,56 @@ struct RootView: View {
         // Black and white throughout; colour only where it means something (Settings, deleting).
         .tint(.primary)
         .sensoryFeedback(.selection, trigger: model.tab)
+        .sheet(isPresented: $model.stopSheet) {
+            StopListeningSheet()
+                .presentationDetents([.height(330)])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+
+/// From a tap on the listening pill: stop with one more tap, or carry on.
+struct StopListeningSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "waveform")
+                .font(.system(size: 40, weight: .medium))
+                .symbolEffect(.variableColor.iterative, options: .repeating)
+                .padding(.top, 28)
+            VStack(spacing: 4) {
+                Text("WTF is listening").font(.title2.bold())
+                if let since = model.listeningSince {
+                    Text("Since \(since.formatted(date: .omitted, time: .shortened))")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            VStack(spacing: 10) {
+                Button {
+                    model.setListening(false)
+                    dismiss()
+                } label: {
+                    Label("Stop Listening", systemImage: "stop.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 34)
+                }
+                .buttonStyle(.borderedProminent)
+                Button("What Was I Saying?") {
+                    dismiss()
+                    model.askFromShortcut()
+                }
+                .frame(maxWidth: .infinity)
+                Button("Keep Listening") { dismiss() }
+                    .foregroundStyle(.secondary)
+            }
+            .buttonBorderShape(.capsule)
+            .padding(.horizontal, 24)
+            Spacer(minLength: 0)
+        }
+        .tint(.primary)
+        .sensoryFeedback(.impact, trigger: model.recording)
     }
 }
 
