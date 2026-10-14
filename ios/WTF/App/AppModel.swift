@@ -112,22 +112,52 @@ final class AppModel {
             return false
         }
         do {
-            try await SpeechEngine.shared.prepare()
+            // Only the first time does the speech model need fetching; after that, no network at all.
+            if !(await SpeechEngine.shared.isReady()) { try await SpeechEngine.shared.prepare() }
             // The voice models download once (about 22 MB) while you talk.
-            if VoiceEngine.enabled { Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } } // failures are logged inside
+            if VoiceEngine.enabled, !VoiceEngine.downloaded {
+                Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } // failures are logged inside
+            }
+            // The Lock Screen card first: iOS only lets an app start the microphone from the Lock
+            // Screen or the Action button if its card is showing.
+            ListeningActivity.shared.start()
             await LiveTranscriber.shared.start()
-            try Recorder.shared.start()
+            try await switchMicrophoneOn()
             recording = true
             listeningSince = Date()
-            ListeningActivity.shared.start()
             problem = nil
             UserDefaults.standard.set(true, forKey: "listening")
             return true
         } catch {
             Log.error("Couldn't start listening", error)
-            problem = "Couldn't start listening: \(error.localizedDescription)"
+            ListeningActivity.shared.stop()
+            await LiveTranscriber.shared.stop()
+            let code = AVAudioSession.ErrorCode(rawValue: (error as NSError).code)
+            if code == .insufficientPriority || code == .cannotStartRecording || code == .cannotInterruptOthers {
+                problem = "iOS didn\u{2019}t let WTF switch the microphone on from here (something else may have it). Open WTF to start listening."
+            } else {
+                problem = "Couldn't start listening: \(error.localizedDescription)"
+            }
             return false
         }
+    }
+
+    /// The microphone on, with a few quick tries: from the Lock Screen or the Action button, iOS
+    /// can be holding the audio for a moment (its own panel) and say no to the first ask.
+    private func switchMicrophoneOn() async throws {
+        var lastError: Error?
+        for attempt in 1...4 {
+            do {
+                try Recorder.shared.start()
+                if attempt > 1 { Log.info("The microphone came on at try \(attempt)") }
+                return
+            } catch {
+                lastError = error
+                Log.error("The microphone didn't come on (try \(attempt) of 4)", error)
+                try? await Task.sleep(for: .milliseconds(400 * attempt))
+            }
+        }
+        if let lastError { throw lastError }
     }
 
     static let pausedNotice = "wtf.listening.paused"
@@ -220,8 +250,11 @@ final class AppModel {
     func answerFromShortcut() async -> String {
         let pressed = Date()
         if !recording, UserDefaults.standard.object(forKey: "buttonStartsListening") as? Bool ?? true {
+            // Listening was meant to be on: something (a call, iOS closing the app) stopped it.
+            let wasOn = UserDefaults.standard.bool(forKey: "listening")
             let started = await startListening()
-            let answer = started ? "Listening. Press again any time for what you were just saying." : (problem ?? "Couldn't start listening.")
+            let answer = started ? (wasOn ? "WTF had stopped listening, so it's listening again now." : "Listening. Press again any time for what you were just saying.")
+                : (problem ?? "Couldn't start listening.")
             _ = await ReadAloud.shared.startIntoHeadphones(started ? "Listening." : answer)
             Log.info("Action button: \(started ? "started listening" : "couldn't start listening")")
             return answer
