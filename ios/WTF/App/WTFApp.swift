@@ -17,6 +17,7 @@ struct WTFApp: App {
                     _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
                     // Carry on listening if it was on when the app last ran.
                     Log.info("App started (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
+                    if !ListeningActivity.drawable { Log.error("WTF's widget extension isn't installed: no pill, Lock Screen card or controls") }
                     model.resumeIfNeeded()
                     model.processNow()
                 }

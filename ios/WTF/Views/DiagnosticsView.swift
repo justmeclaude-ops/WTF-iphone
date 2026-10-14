@@ -44,6 +44,7 @@ struct DiagnosticsView: View {
             Live transcription: \(LiveTranscriber.shared.running ? "running" : "off")
             Speech detector: \(SpeechGate.shared.isReady ? "neural" : "loudness only")
             Microphone: \(Recorder.shared.microphone)
+            Pill, Lock Screen card and controls: \(ListeningActivity.drawable ? "installed" : "MISSING (reinstall WTF and keep its app extension)"), Live Activities \(ListeningActivity.allowed ? "allowed" : "turned off")
             Contacts: \(PersonalWords.useContacts && PersonalWords.contactsAllowed ? "used" : "not used"), calendar: \(PersonalWords.useCalendar && PersonalWords.calendarAllowed ? "used" : "not used")
             Corrections learnt: \(Learned.fixes.count)
             Speech model: \(speech ? "ready" : "not installed")

@@ -90,6 +90,21 @@ final class Recorder: @unchecked Sendable {
         running = true
     }
 
+    /// Whether iOS will let WTF switch the microphone on from where it is now. From the background
+    /// (the Action button, a Shortcut) it usually won't, and iOS's reason goes in the log.
+    func canStartHere() -> Bool {
+        sessionLock.lock(); defer { sessionLock.unlock() }
+        if running { return true }
+        do {
+            try use(Self.base)
+            try AVAudioSession.sharedInstance().setActive(true)
+            return true
+        } catch {
+            Log.error("iOS won't let WTF switch the microphone on from the background", error)
+            return false
+        }
+    }
+
     /// Settings › Use AirPods Microphone.
     static var airPodsMic: Bool { UserDefaults.standard.bool(forKey: "airPodsMic") }
     private static let base: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]

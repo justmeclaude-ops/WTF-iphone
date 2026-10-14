@@ -91,11 +91,14 @@ struct ListeningLiveActivity: Widget {
             let s = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Listening().padding(.leading, 4)
+                    HStack(spacing: 5) {
+                        RecordingDot()
+                        Text("Recording").font(.caption.weight(.semibold)).foregroundStyle(.red)
+                    }
+                    .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(s.since, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        .frame(maxWidth: 56, alignment: .trailing)
+                    Elapsed(since: s.since, font: .caption).frame(width: 56, alignment: .trailing)
                 }
                 DynamicIslandExpandedRegion(.center) {
                     Text(s.topic ?? "Listening").font(.headline).lineLimit(1)
@@ -107,29 +110,42 @@ struct ListeningLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Listening()
+                RecordingDot().padding(.leading, 2)
             } compactTrailing: {
-                if s.hanging > 0 {
-                    Text("\(s.hanging)").font(.caption2.bold()).foregroundStyle(.white)
-                } else if let topic = s.topic {
-                    Text(topic).font(.caption2).lineLimit(1).frame(maxWidth: 70)
-                }
+                // A fixed width: a running time left to size itself fills the whole island.
+                Elapsed(since: s.since, font: .caption2, alignment: .center).frame(width: 40)
             } minimal: {
-                Listening()
+                RecordingDot()
             }
             // A tap on the pill opens WTF to stop listening; holding it shows the buttons.
             .widgetURL(URL(string: "wtf://listening"))
-            .keylineTint(.green)
+            .keylineTint(.red)
         }
         .supplementalActivityFamilies([.small])
     }
 }
 
-/// The green waveform that says it's listening.
-struct Listening: View {
+/// The red dot that says WTF's recording, wherever the card or the pill shows.
+struct RecordingDot: View {
     var body: some View {
-        Image(systemName: "waveform").foregroundStyle(.green)
-            .symbolEffect(.variableColor.iterative, options: .repeating)
+        Circle().fill(.red).frame(width: 9, height: 9)
+    }
+}
+
+/// How long it's been recording, in red like Voice Memos. Always given a width: a running time
+/// takes all the room it's offered.
+struct Elapsed: View {
+    let since: Date
+    let font: Font
+    var alignment: TextAlignment = .trailing
+
+    var body: some View {
+        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+            .font(font.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.red)
+            .multilineTextAlignment(alignment)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
     }
 }
 
@@ -141,8 +157,8 @@ struct LockScreenCard: View {
         if family == .small {
             // Apple Watch Smart Stack: just the topic and what's hanging.
             VStack(alignment: .leading, spacing: 4) {
-                HStack { Listening(); Text(state.since, style: .timer).font(.caption2.monospacedDigit()) }
-                Text(state.topic ?? "Listening").font(.headline).lineLimit(2)
+                HStack(spacing: 5) { RecordingDot(); Elapsed(since: state.since, font: .caption2, alignment: .leading).frame(width: 44, alignment: .leading) }
+                Text(state.topic ?? "Recording").font(.headline).lineLimit(2)
                 if state.hanging > 0 {
                     Text("\(state.hanging) left hanging").font(.caption2).foregroundStyle(.secondary)
                 }
@@ -151,11 +167,10 @@ struct LockScreenCard: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Listening().font(.title3)
-                    Text(state.topic ?? "Listening").font(.headline).foregroundStyle(.white).lineLimit(1)
+                    RecordingDot()
+                    Text(state.topic ?? "Recording").font(.headline).foregroundStyle(.white).lineLimit(1)
                     Spacer()
-                    Text(state.since, style: .timer).font(.subheadline.monospacedDigit()).foregroundStyle(.white.opacity(0.7))
-                        .multilineTextAlignment(.trailing).frame(maxWidth: 72)
+                    Elapsed(since: state.since, font: .subheadline).frame(width: 72, alignment: .trailing)
                 }
                 if state.trail.count > 1 { Trail(steps: state.trail) }
                 PillControls()

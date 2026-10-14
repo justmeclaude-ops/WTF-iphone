@@ -183,9 +183,22 @@ final class AppModel {
     typealias ComeForward = @MainActor () async -> Bool
 
     /// Listening on, from the Action button or a Shortcut, without opening the app if it can. If
-    /// iOS won't let WTF switch the microphone on from the background, [forward] brings WTF
-    /// forward, where it always can, and it starts there instead.
+    /// iOS won't let WTF switch the microphone on from the background (it usually won't: only
+    /// Apple's own apps can count on that), [forward] brings WTF forward, where it always can, and
+    /// it starts there instead. One quick check first, so that's straight away, not after seconds
+    /// of tries and a Lock Screen card started and stopped for nothing.
     func startListeningFromShortcut(forward: ComeForward? = nil) async -> Bool {
+        if let forward, UIApplication.shared.applicationState != .active {
+            if Recorder.shared.canStartHere() {
+                Log.info("iOS let WTF switch the microphone on from the background")
+            } else {
+                guard await forward() else {
+                    problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
+                    return false
+                }
+                return await startListening()
+            }
+        }
         if await startListening() { return true }
         guard let forward, await forward() else { return false }
         return await startListening()
