@@ -19,7 +19,6 @@ struct SettingsView: View {
     @AppStorage("useContacts") private var useContacts = false
     @AppStorage("useCalendar") private var useCalendar = false
     @AppStorage("airPodsMic") private var airPodsMic = false
-    @AppStorage("buttonStartsListening") private var buttonStartsListening = true
     @State private var accessProblem: String?
 
     var body: some View {
@@ -98,7 +97,6 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink("Set Up Action Button", value: "button")
-                    Toggle("A Press Starts Listening", isOn: $buttonStartsListening).tint(.green)
                     NavigationLink(value: "voice") {
                         LabeledContent("Read-Aloud Voice", value: ReadAloud.voice?.name ?? "Default")
                     }
@@ -136,7 +134,7 @@ struct SettingsView: View {
             }
             .task { speechReady = await SpeechEngine.shared.isReady() }
             .confirmationDialog("Delete every conversation, transcript, list item and voice?", isPresented: $confirmWipe, titleVisibility: .visible) {
-                Button("Delete Everything", role: .destructive) { Task { await model.pipeline.deleteEverything() } }
+                Button("Delete Everything", role: .destructive) { Task { await model.deleteEverything() } }
             }
         }
     }

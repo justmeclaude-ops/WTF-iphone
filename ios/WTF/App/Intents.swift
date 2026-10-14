@@ -3,39 +3,37 @@ import AppIntents
 /// "WTF?" from the Action button (or a Shortcut): without opening the app or unlocking. With
 /// AirPods or headphones in, the answer is read into your ears; otherwise it shows at the top
 /// of the screen. Either way it's waiting in Ask when you next open WTF.
-struct AskWTFIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
+struct AskWTFIntent: AudioPlaybackIntent {
     static let title: LocalizedStringResource = "Ask WTF"
-    static let description = IntentDescription("What you were just on about: read aloud if AirPods are in, shown on screen if not. Starts listening if it's off; press again for what came before.")
-    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+    static let description = IntentDescription("What you were just on about: read aloud if AirPods are in, shown on screen if not. Press again for what came before.")
+    static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
+        let answer = await AppModel.shared.answerFromShortcut()
         return .result(dialog: "\(answer)")
     }
 }
 
 // Audio-playback intents: iOS lets them start speaking straight away from the background,
-// rather than holding the sound back until the button's pressed again. Audio-recording and Live
-// Activity too, so a press can start listening without opening the app: iOS only lets an app
-// switch the microphone on from the background with its Lock Screen card showing, and only
-// these intents may start the card from there. If iOS still says no, WTF comes forward and
-// starts listening there (see comeForward).
+// rather than holding the sound back until the button's pressed again. The ones that can start
+// listening are audio-recording and Live Activity intents too, as iOS asks; but it won't let WTF
+// switch the microphone on from the background anyway, so WTF comes forward to start it (see comeForward).
 
 /// "What was I saying?" from the Action button, Siri or a Shortcut, without opening the app:
 /// read into your ears if AirPods or headphones are in, shown at the top of the screen if not.
-/// If listening's off, a press starts it; pressed again soon after an answer, it goes a step
+/// Always an answer, even with listening off; pressed again soon after one, it goes a step
 /// further back (see AppModel.answerFromShortcut).
-struct WhatWasISayingIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
+struct WhatWasISayingIntent: AudioPlaybackIntent {
     static let title: LocalizedStringResource = "What Was I Saying?"
-    static let description = IntentDescription("What you were just on about, read into your AirPods if they're in. Press again for what came before; if WTF isn't listening, starts it.")
-    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+    static let description = IntentDescription("What you were just on about, read into your AirPods if they're in. Press again for what came before.")
+    static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
+        let answer = await AppModel.shared.answerFromShortcut()
         return .result(dialog: "\(answer)")
     }
 }
@@ -124,7 +122,7 @@ struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityInt
         if let choice { pick = choice } else { pick = try await $choice.requestValue("What do you need?") }
         let answer: String
         switch pick {
-        case .saying: answer = await AppModel.shared.answerFromShortcut(forward: { await comeForward() })
+        case .saying: answer = await AppModel.shared.answerFromShortcut()
         case .before: answer = await AppModel.shared.beforeThatFromShortcut()
         case .listening: answer = await AppModel.shared.toggleListeningFromShortcut(forward: { await comeForward() })
         case .list: answer = await AppModel.shared.listFromShortcut()

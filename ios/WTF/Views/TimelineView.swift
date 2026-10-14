@@ -17,14 +17,17 @@ struct TimelineView: View {
         }
     }
 
-    private var byDay: [(String, [Conversation])] {
-        var out: [(String, [Conversation])] = []
+    /// The days, newest first, each with its conversations.
+    private var byDay: [(day: Date, header: String, list: [Conversation])] {
+        var out: [(day: Date, header: String, list: [Conversation])] = []
         for c in shown {
-            let day = dayHeader(c.start)
-            if out.last?.0 == day { out[out.count - 1].1.append(c) } else { out.append((day, [c])) }
+            let day = Calendar.current.startOfDay(for: c.start)
+            if out.last?.day == day { out[out.count - 1].list.append(c) } else { out.append((day, dayHeader(c.start), [c])) }
         }
         return out
     }
+
+    private var searching: Bool { query.trimmingCharacters(in: .whitespaces).count >= 2 }
 
     var body: some View {
         @Bindable var model = model
@@ -33,8 +36,16 @@ struct TimelineView: View {
                 if !pending.isEmpty || model.transcribing != nil {
                     Section { TranscribingRow(pending: pending.count) }
                 }
-                ForEach(byDay, id: \.0) { day, list in
+                ForEach(byDay, id: \.day) { day, header, list in
                     Section {
+                        // The whole day at a glance, then each conversation. (Not while searching.)
+                        if !searching {
+                            YourDayRow(day: day, conversations: list)
+                                .background { NavigationLink(value: DayRef(day: day)) { EmptyView() }.opacity(0) }
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 4, trailing: 16))
+                        }
                         ForEach(list) { c in
                             TimelineEntry(conversation: c)
                                 .background { NavigationLink(value: c) { EmptyView() }.opacity(0) }
@@ -58,7 +69,7 @@ struct TimelineView: View {
                                 }
                         }
                     } header: {
-                        Text(day).font(.subheadline).foregroundStyle(.secondary).textCase(nil)
+                        Text(header).font(.subheadline).foregroundStyle(.secondary).textCase(nil)
                     }
                 }
             }
@@ -75,6 +86,7 @@ struct TimelineView: View {
             .refreshable { await model.pipeline.run() }
             .navigationTitle("Timeline")
             .navigationDestination(for: Conversation.self) { ConversationView(conversation: $0) }
+            .navigationDestination(for: DayRef.self) { DayView(day: $0.day) }
             .toolbar { ToolbarItem(placement: .topBarLeading) { ListeningButton() } }
         }
     }

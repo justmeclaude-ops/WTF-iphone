@@ -136,6 +136,12 @@ enum Brain {
         return TopicChange(topics: step.topics, dropped: step.dropped, leftAt: step.leftAt, leftAtTopic: step.leftAtTopic, facts: step.facts)
     }
 
+    /// "Your Day": a few sentences on a whole day, from its conversations' notes (Prompts.day).
+    static func day(_ prompt: String) async throws -> String {
+        let session = LanguageModelSession(model: model, instructions: "You look back over someone's day for them, from notes on their conversations, in a few plain sentences.")
+        return try await session.respond(to: prompt).content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// A short answer to read aloud, given up on after [seconds].
     static func quick(_ prompt: String, seconds: Double) async -> String? {
         await withDeadline(seconds) {

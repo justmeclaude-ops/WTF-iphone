@@ -145,9 +145,11 @@ final class Fact {
     }
 }
 
-struct ChatMessage: Identifiable, Equatable {
-    let id = UUID()
+/// A question in Ask, or WTF's answer: kept on the iPhone (see ChatLog).
+struct ChatMessage: Identifiable, Equatable, Codable {
+    var id = UUID()
     var fromUser: Bool
     var text: String
     var isError = false
+    var date = Date()
 }

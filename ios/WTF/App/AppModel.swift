@@ -17,7 +17,8 @@ final class AppModel {
     let pipeline: Pipeline
 
     var recording = false
-    var messages: [ChatMessage] = []
+    /// Ask's questions and answers, kept from one day to the next (see ChatLog).
+    var messages: [ChatMessage] = ChatLog.load()
     /// What's happening while you wait ("Catching up…"), or nil.
     var status: String?
     /// The answer being written, word by word.
@@ -225,7 +226,19 @@ final class AppModel {
         Task { await pipeline.run() }
     }
 
-    func newChat() { messages = [] }
+    /// A question or answer in Ask, kept.
+    func add(_ message: ChatMessage) {
+        messages.append(message)
+        ChatLog.save(messages)
+    }
+
+    /// Settings › Delete All Recordings: everything heard, and everything asked and written about it.
+    func deleteEverything() async {
+        messages = []
+        ChatLog.save([])
+        DayDigests.shared.forget()
+        await pipeline.deleteEverything()
+    }
 
     /// From the Action button, a shortcut or Siri: go to Ask and ask the quick question.
     func askFromShortcut() {
@@ -236,7 +249,7 @@ final class AppModel {
     func ask(_ question: String, focus: UUID? = nil) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, status == nil else { return }
-        messages.append(ChatMessage(fromUser: true, text: q))
+        add(ChatMessage(fromUser: true, text: q))
         Brain.prewarm()
         status = "Catching up on the last few seconds\u{2026}"
         Task {
@@ -246,11 +259,11 @@ final class AppModel {
             let pipeline = pipeline
             if await withDeadline(20, { await pipeline.catchUp() }) == nil {
                 Log.error("Catching up took over 20 s; answering from what's transcribed so far")
-                messages.append(ChatMessage(fromUser: false, text: "The last few seconds are still being transcribed, so this may miss them."))
+                add(ChatMessage(fromUser: false, text: "The last few seconds are still being transcribed, so this may miss them."))
             }
             // Questions about the list are answered straight from it.
             if let direct = ListAnswers.answer(q, open: openItems()) {
-                messages.append(ChatMessage(fromUser: false, text: direct))
+                add(ChatMessage(fromUser: false, text: direct))
                 return
             }
             let intent = Prompts.intent(q)
@@ -258,12 +271,12 @@ final class AppModel {
             let latest = await pipeline.latestConversation()
             if focus == nil, intent == .latest {
                 guard let latest else {
-                    messages.append(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
+                    add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
                     return
                 }
                 // Word for word, straight away; the AI's gist follows.
                 if let recap = QuickRecap.of(latest.transcript, start: latest.start, now: now) {
-                    messages.append(ChatMessage(fromUser: false, text: recap))
+                    add(ChatMessage(fromUser: false, text: recap))
                 }
                 guard Brain.notReadyReason == nil else { return }
                 let background = await pipeline.latestBackground()
@@ -271,12 +284,12 @@ final class AppModel {
                 return
             }
             if let why = Brain.notReadyReason {
-                messages.append(ChatMessage(fromUser: false, text: why))
+                add(ChatMessage(fromUser: false, text: why))
                 return
             }
             let found = await pipeline.notes(for: q, focus: focus)
             guard !found.notes.isEmpty else {
-                messages.append(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
+                add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
                 return
             }
             await answer(Prompts.focused(question: q, notes: found.notes, best: found.best, now: now, background: found.background))
@@ -288,22 +301,15 @@ final class AppModel {
     /// seconds: it uses the answer kept ready while you talked if nothing's been said since,
     /// otherwise works one out with a short limit, and falls back to what was said word for word.
     ///
-    /// One button, more than one thing: if listening's off, a press starts it (Settings can turn
-    /// that off). Pressed again within 20 seconds of an answer, it goes a step further back: the
-    /// topic left hanging before that, then the one before. After that it starts over.
-    func answerFromShortcut(forward: ComeForward? = nil) async -> String {
+    /// It always answers, listening or not (starting listening is its own button): from what was
+    /// heard before if it's off. Pressed again within 20 seconds of an answer, it goes a step
+    /// further back: the topic left hanging before that, then the one before. After that it starts over.
+    func answerFromShortcut() async -> String {
         buttonPressedAt = Date()
         let pressed = Date()
-        if !recording, UserDefaults.standard.object(forKey: "buttonStartsListening") as? Bool ?? true {
-            // Listening was meant to be on: something (a call, iOS closing the app) stopped it.
-            let wasOn = UserDefaults.standard.bool(forKey: "listening")
-            let started = await startListeningFromShortcut(forward: forward)
-            let answer = started ? (wasOn ? "WTF had stopped listening, so it's listening again now." : "Listening. Press again any time for what you were just saying.")
-                : (problem ?? "Couldn't start listening.")
-            _ = await ReadAloud.shared.startIntoHeadphones(started ? "Listening." : answer)
-            Log.info("Action button: \(started ? "started listening" : "couldn't start listening")")
-            return answer
-        }
+        // Listening was meant to be on, but something (a call, iOS closing WTF) stopped it: the
+        // answer says so, as it only covers what was heard before then.
+        let stopped = !recording && UserDefaults.standard.bool(forKey: "listening")
         var answer: String
         if pressed.timeIntervalSince(lastPress) < 20, backstory.indices.contains(step) {
             answer = backstory[step]
@@ -318,9 +324,10 @@ final class AppModel {
             answer += " That's as far back as I've got."
             step += 1
         }
+        if stopped, !answer.contains("listening") { answer += " WTF stopped listening, so open it to start again." }
         lastPress = Date()
-        messages.append(ChatMessage(fromUser: true, text: Self.quickQuestion))
-        messages.append(ChatMessage(fromUser: false, text: answer))
+        add(ChatMessage(fromUser: true, text: Self.quickQuestion))
+        add(ChatMessage(fromUser: false, text: answer))
         // Waits only until it's started playing: the sound keeps the app awake to the end.
         let reading = await ReadAloud.shared.startIntoHeadphones(answer)
         Log.info("Action button: answered in \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s, \(reading ? "reading it out" : "shown only")")
@@ -344,8 +351,8 @@ final class AppModel {
             step = 0
         }
         lastPress = Date()
-        messages.append(ChatMessage(fromUser: true, text: "What came before that?"))
-        messages.append(ChatMessage(fromUser: false, text: answer))
+        add(ChatMessage(fromUser: true, text: "What came before that?"))
+        add(ChatMessage(fromUser: false, text: answer))
         _ = await ReadAloud.shared.startIntoHeadphones(answer)
         return answer
     }
@@ -419,13 +426,13 @@ final class AppModel {
     func askAbout(_ thread: TopicThread, in conversation: UUID) {
         guard status == nil else { return }
         tab = 0
-        messages.append(ChatMessage(fromUser: true, text: "Where was I with \u{201C}\(thread.title)\u{201D}?"))
+        add(ChatMessage(fromUser: true, text: "Where was I with \u{201C}\(thread.title)\u{201D}?"))
         status = "Looking back\u{2026}"
         Task {
             defer { status = nil; streaming = nil }
             let lines = await pipeline.lines(of: thread, in: conversation)
             guard !lines.isEmpty else {
-                messages.append(ChatMessage(fromUser: false, text: "I can't find what was said about that."))
+                add(ChatMessage(fromUser: false, text: "I can't find what was said about that."))
                 return
             }
             if Brain.notReadyReason == nil {
@@ -433,7 +440,7 @@ final class AppModel {
             } else {
                 // No AI: the sentences that mention it, word for word.
                 let quotes = Prompts.sentences(about: thread.title, in: lines)
-                messages.append(ChatMessage(fromUser: false, text: quotes.isEmpty ? "I can't find what was said about that."
+                add(ChatMessage(fromUser: false, text: quotes.isEmpty ? "I can't find what was said about that."
                     : "What was said about it:\n" + quotes.map { "\u{201C}\($0)\u{201D}" }.joined(separator: "\n")))
             }
         }
@@ -448,12 +455,12 @@ final class AppModel {
                 streaming = soFar
             }
             streaming = nil
-            messages.append(ChatMessage(fromUser: false, text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            add(ChatMessage(fromUser: false, text: text.trimmingCharacters(in: .whitespacesAndNewlines)))
         } catch {
             Log.error("Apple Intelligence couldn't answer", error)
             streaming = nil
-            if !text.isEmpty { messages.append(ChatMessage(fromUser: false, text: text)) }
-            messages.append(ChatMessage(fromUser: false, text: "Apple Intelligence couldn't answer that one (\(error.localizedDescription)).", isError: true))
+            if !text.isEmpty { add(ChatMessage(fromUser: false, text: text)) }
+            add(ChatMessage(fromUser: false, text: "Apple Intelligence couldn't answer that one (\(error.localizedDescription)).", isError: true))
         }
     }
 

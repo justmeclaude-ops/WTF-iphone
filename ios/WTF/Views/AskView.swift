@@ -43,11 +43,22 @@ struct AskView: View {
                         }
                         if model.messages.isEmpty { welcome }
                         ForEach(Array(model.messages.enumerated()), id: \.element.id) { i, m in
-                            let next = i + 1 < model.messages.count ? model.messages[i + 1] : nil
-                            Bubble(message: m, tail: next?.fromUser != m.fromUser)
-                                .padding(.top, i > 0 && model.messages[i - 1].fromUser != m.fromUser ? 8 : 0)
+                            let previous: ChatMessage? = i > 0 ? model.messages[i - 1] : nil
+                            let next: ChatMessage? = i + 1 < model.messages.count ? model.messages[i + 1] : nil
+                            let fresh = Self.startsAfresh(m, after: previous)
+                            let endsRun = next.map { $0.fromUser != m.fromUser || Self.startsAfresh($0, after: m) } ?? true
+                            let turned = !fresh && previous?.fromUser != m.fromUser
+                            if fresh {
+                                Text("\(Text(dayLabel(m.date)).bold()) \(m.date.formatted(date: .omitted, time: .shortened))")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.top, i > 0 ? 18 : 4).padding(.bottom, 6)
+                            }
+                            Bubble(message: m, tail: endsRun)
+                                .padding(.top, turned ? 8 : 0)
                         }
-                        if let last = model.messages.last, !last.fromUser, !last.isError, model.status == nil {
+                        if let last = model.messages.last, !last.fromUser, !last.isError, model.status == nil,
+                           last.date > Date().addingTimeInterval(-1800) {
                             FollowUps(conversation: latest.first?.id).padding(.top, 6)
                         }
                         if let s = model.streaming, !s.isEmpty {
@@ -64,6 +75,7 @@ struct AskView: View {
                     .padding(.horizontal, 12)
                     .animation(.snappy, value: model.messages)
                 }
+                .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: model.messages.count) { withAnimation { proxy.scrollTo("bottom") } }
                 .onChange(of: (model.streaming?.count ?? 0) / 60) { proxy.scrollTo("bottom") }
@@ -81,10 +93,6 @@ struct AskView: View {
             .navigationTitle("Ask")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { ListeningButton() }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("New Chat", systemImage: "square.and.pencil") { model.newChat() }
-                        .disabled(model.messages.isEmpty)
-                }
             }
         }
     }
@@ -113,8 +121,36 @@ struct AskView: View {
     }
 
     private var inputBar: some View {
+        VStack(spacing: 8) {
+            if typing && input.isEmpty && !model.messages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(suggestions, id: \.self) { q in
+                            Button(q) {
+                                typing = false
+                                model.ask(q)
+                            }
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+                    .tint(.primary)
+                    .padding(.horizontal, 12)
+                }
+                .onScrollPhaseChange { _, phase in
+                    if phase != .idle { TabSwipe.sidewaysScrollUntil = Date().addingTimeInterval(0.6) }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            field
+        }
+        .animation(.snappy, value: typing && input.isEmpty)
+    }
+
+    private var field: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Ask WTF", text: $input, axis: .vertical)
+            TextField("Ask about anything you heard", text: $input, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($typing)
                 .padding(.horizontal, 14).padding(.vertical, 9)
@@ -131,6 +167,12 @@ struct AskView: View {
             .sensoryFeedback(.impact(weight: .light), trigger: model.messages.count)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
+    }
+
+    /// A new day, or an hour since the last message: shown with its day and time, like Messages.
+    static func startsAfresh(_ m: ChatMessage, after previous: ChatMessage?) -> Bool {
+        guard let previous else { return true }
+        return !Calendar.current.isDate(m.date, inSameDayAs: previous.date) || m.date.timeIntervalSince(previous.date) > 3600
     }
 
     private func send() {

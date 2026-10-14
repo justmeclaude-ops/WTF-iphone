@@ -5,9 +5,8 @@ import AppIntents
 // Activity intents, iOS runs them in the app, which doesn't open. In the extension they're only
 // there to be named, so their bodies there do nothing.
 
-/// What you were just saying (press again for what came before; starts listening if it's off,
-/// so it's an audio-recording intent too: iOS only lets those switch the microphone on).
-struct WTFAskControlIntent: LiveActivityIntent, AudioPlaybackIntent, AudioRecordingIntent {
+/// What you were just saying (press again for what came before).
+struct WTFAskControlIntent: LiveActivityIntent, AudioPlaybackIntent {
     static let title: LocalizedStringResource = "What Was I Saying?"
     static let openAppWhenRun = false
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
