@@ -90,19 +90,14 @@ final class Recorder: @unchecked Sendable {
         running = true
     }
 
-    /// Whether iOS will let WTF switch the microphone on from where it is now. From the background
-    /// (the Action button, a Shortcut) it usually won't, and iOS's reason goes in the log.
-    func canStartHere() -> Bool {
+    /// Lets go of the audio session after a start that didn't get going, so the microphone
+    /// isn't shown as in use with WTF not listening.
+    func release() {
         sessionLock.lock(); defer { sessionLock.unlock() }
-        if running { return true }
-        do {
-            try use(Self.base)
-            try AVAudioSession.sharedInstance().setActive(true)
-            return true
-        } catch {
-            Log.error("iOS won't let WTF switch the microphone on from the background", error)
-            return false
-        }
+        guard !running else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     /// Settings › Use AirPods Microphone.
@@ -224,6 +219,7 @@ final class Recorder: @unchecked Sendable {
 
     private func installTap() throws {
         let input = engine.inputNode
+        input.removeTap(onBus: 0) // one left by a start that failed after it was put on
         var format = input.outputFormat(forBus: 0)
         // Mid-switch (AirPods going in or out) the microphone can briefly have no format at all:
         // a tap then would crash, so wait a moment for it.

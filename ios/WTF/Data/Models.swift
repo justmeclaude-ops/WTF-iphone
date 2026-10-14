@@ -152,4 +152,6 @@ struct ChatMessage: Identifiable, Equatable, Codable {
     var text: String
     var isError = false
     var date = Date()
+    /// The conversations it's about (or drew on): deleting one deletes this too.
+    var about: [UUID]? = nil
 }

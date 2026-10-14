@@ -59,6 +59,12 @@ final class DayDigests {
         }
     }
 
+    /// A conversation deleted: its day's recap goes until it's written again without it.
+    func forget(day: Date) {
+        kept[Self.key(day)] = nil
+        save()
+    }
+
     /// Settings › Delete All Recordings.
     func forget() {
         kept = [:]

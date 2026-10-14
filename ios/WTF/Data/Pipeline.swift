@@ -23,6 +23,8 @@ actor Pipeline {
 
     /// Bumped by Delete Everything: work that was waiting on something checks it hasn't happened meanwhile.
     private var wiped = 0
+    /// When everything was last deleted: a recording that started before then, finished after, goes too.
+    private var wipedAt = Date.distantPast
 
     /// A conversation, fetched afresh by its id: one held across a wait may have been deleted meanwhile.
     private func conversation(_ id: UUID) -> Conversation? {
@@ -30,6 +32,10 @@ actor Pipeline {
     }
 
     func addChunk(url: URL, start: Date, end: Date) {
+        guard start >= wipedAt else {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
         modelContext.insert(Chunk(start: start, end: end, path: url.path))
         try? modelContext.save()
     }
@@ -160,8 +166,9 @@ actor Pipeline {
             await summarise(id)
         }
         guard wiped == generation else { return }
+        // Old recordings' records go here; old conversations go in the app (AppModel.expireOld),
+        // where the screens' copies are, so none is left pointing at one that's gone.
         let cutoff = Date().addingTimeInterval(-Double(keepDays) * 86_400)
-        try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.end < cutoff })
         try? modelContext.delete(model: Chunk.self, where: #Predicate { $0.end < cutoff })
         try? modelContext.save()
     }
@@ -200,11 +207,13 @@ actor Pipeline {
         try? modelContext.save()
     }
 
-    func latestConversation() -> (transcript: String, start: Date, end: Date, title: String?)? {
+    func latestConversation() -> (id: UUID, transcript: String, start: Date, end: Date, title: String?)? {
         var d = FetchDescriptor<Conversation>(sortBy: [SortDescriptor(\.end, order: .reverse)])
         d.fetchLimit = 1
-        return (try? modelContext.fetch(d))?.first.map { ($0.transcript, $0.start, $0.end, $0.title) }
+        return (try? modelContext.fetch(d))?.first.map { ($0.id, $0.transcript, $0.start, $0.end, $0.title) }
     }
+
+    func conversationCount() -> Int { (try? modelContext.fetchCount(FetchDescriptor<Conversation>())) ?? 0 }
 
     /// Counts for the diagnostics report (no content).
     func health() -> String {
@@ -259,7 +268,7 @@ actor Pipeline {
     /// What the AI needs for any other question: the day's notes, the conversation that best
     /// matches it (by meaning as well as words), the parts of it that matter most, and what's
     /// known that bears on it.
-    func notes(for question: String, focus: UUID?) -> (notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, background: String) {
+    func notes(for question: String, focus: UUID?) -> (notes: [(label: String, title: String?, summary: String?)], best: (label: String, transcript: String)?, background: String, used: [UUID]) {
         let all = (try? modelContext.fetch(FetchDescriptor<Conversation>(sortBy: [SortDescriptor(\.start, order: .reverse)]))) ?? []
         let pool = focus.map { id in all.filter { $0.id == id } } ?? Array(all.prefix(40))
         let keys = Prompts.keywords(question)
@@ -273,7 +282,9 @@ actor Pipeline {
         }
         let best = pool.map { ($0, rank($0)) }.max { $0.1 < $1.1 }?.0
         let notes = pool.prefix(12).map { (label: label($0), title: $0.title, summary: $0.summary) }
-        guard let best else { return (notes, nil, "") }
+        var used = pool.prefix(12).map(\.id)
+        guard let best else { return (notes, nil, "", used) }
+        if !used.contains(best.id) { used.append(best.id) }
         // A long conversation: the lines that bear on the question (and the ones either side), not just its end.
         var transcript = best.transcript
         if Prompts.tokens(TranscriptFormat.compact(transcript)) > 1_300 {
@@ -289,20 +300,18 @@ actor Pipeline {
             if !excerpt.isEmpty { transcript = excerpt + "\n" + Prompts.tail(transcript, budget: 150) }
         }
         let background = Prompts.background(memory: best.memory, facts: relevantFacts(to: question, limit: 5))
-        return (notes, (label(best), transcript), background)
+        return (notes, (label(best), transcript), background, used)
     }
 
-    func deleteConversation(_ id: UUID) {
+    /// A conversation about to be deleted (by the app, where the screens' copies are): nothing
+    /// more is done with it, and its audio goes.
+    func forget(_ id: UUID) {
+        unremembered[id] = nil
+        toFollow.removeAll { $0.id == id }
         let optional: UUID? = id
         for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == optional }))) ?? [] {
             if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
         }
-        try? modelContext.delete(model: Conversation.self, where: #Predicate { $0.id == id })
-        try? modelContext.delete(model: Chunk.self, where: #Predicate { $0.conversationID == optional })
-        // What was learnt from it goes with it.
-        try? modelContext.delete(model: Fact.self, where: #Predicate { $0.conversationID == optional })
-        unremembered[id] = nil
-        try? modelContext.save()
     }
 
     /// Once: what earlier versions got wrong, put right. The "[1]" a correction left at the start
@@ -348,6 +357,7 @@ actor Pipeline {
 
     func deleteEverything() {
         wiped += 1
+        wipedAt = Date()
         toFollow = []
         unremembered = [:]
         try? modelContext.delete(model: Fact.self)

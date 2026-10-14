@@ -34,6 +34,12 @@ final class Standby {
         await ReadAloud.shared.prepare(made.text)
     }
 
+    /// Something was deleted: the answer kept ready (and its sound) may be about it.
+    func forget() {
+        ready = nil
+        ReadAloud.shared.forget()
+    }
+
     /// For a press: the kept answer if nothing's been said since; otherwise one worked out now
     /// with a 3.5 s limit on the AI, then the kept one, then the last words said, word for word.
     func answerNow() async -> String {

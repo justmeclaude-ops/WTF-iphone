@@ -52,7 +52,6 @@ final class AppModel {
         container = try! ModelContainer(for: Chunk.self, Conversation.self, ActionItem.self, Person.self, Fact.self)
         pipeline = Pipeline(modelContainer: container)
         let pipeline = pipeline
-        Task { await pipeline.repairOnce() }
         Recorder.shared.onChunk = { url, start, end in
             Task {
                 await pipeline.addChunk(url: url, start: start, end: end)
@@ -151,6 +150,8 @@ final class AppModel {
             Log.error("Couldn't start listening", error)
             ListeningActivity.shared.stop()
             await LiveTranscriber.shared.stop()
+            Recorder.shared.stop()
+            Recorder.shared.release()
             if !microphone {
                 problem = "Couldn't start listening: \(error.localizedDescription)"
             } else if UIApplication.shared.applicationState == .active {
@@ -190,10 +191,15 @@ final class AppModel {
     /// it starts there instead. One quick check first, so that's straight away, not after seconds
     /// of tries and a Lock Screen card started and stopped for nothing.
     func startListeningFromShortcut(forward: ComeForward? = nil) async -> Bool {
-        if let forward, UIApplication.shared.applicationState != .active {
-            if Recorder.shared.canStartHere() {
+        if let forward, UIApplication.shared.applicationState != .active, !Recorder.shared.running {
+            // One try at the microphone itself (not just the audio session) before anything else
+            // starts, so a no leaves nothing half-started: no Lock Screen card, no microphone in use.
+            do {
+                try Recorder.shared.start()
                 Log.info("iOS let WTF switch the microphone on from the background")
-            } else {
+            } catch {
+                Log.error("iOS won't let WTF switch the microphone on from the background", error)
+                Recorder.shared.release()
                 guard await forward() else {
                     problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."
                     return false
@@ -235,10 +241,106 @@ final class AppModel {
 
     /// Settings › Delete All Recordings: everything heard, and everything asked and written about it.
     func deleteEverything() async {
+        let wasListening = recording
+        // The screens step aside first: one left showing a conversation as it's deleted would read
+        // it after it's gone, and that crashes the app.
+        wiping = true
+        stopSheet = false
+        timelinePath = NavigationPath()
+        settingsPath = NavigationPath()
+        if wasListening { setListening(false) }
         messages = []
         ChatLog.save([])
         DayDigests.shared.forget()
+        Standby.shared.forget()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        try? await Task.sleep(for: .milliseconds(300))
         await pipeline.deleteEverything()
+        container.mainContext.rollback()
+        try? await Task.sleep(for: .milliseconds(300))
+        wiping = false
+        if wasListening { setListening(true) }
+    }
+
+    /// While everything's being deleted: the screens are swapped for a "Deleting" note.
+    var wiping = false
+
+    /// One conversation deleted (from the Timeline or its own page): it, its suggestions and
+    /// what was asked about it go. Deleted here, where the screens' copies are, so none is left
+    /// pointing at it; the pipeline lets go of it first.
+    func deleteConversation(_ id: UUID) async {
+        let found = (try? container.mainContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.id == id }))) ?? []
+        await remove(found)
+    }
+
+    /// Conversations older than Settings › Keep Transcripts go, with what was asked about them.
+    func expireOld() async {
+        let days = UserDefaults.standard.integer(forKey: "keepDays")
+        let cutoff = Date().addingTimeInterval(-Double(days == 0 ? 7 : days) * 86_400)
+        let old = (try? container.mainContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.end < cutoff }))) ?? []
+        guard !old.isEmpty else { return }
+        await remove(old)
+        Log.info("\(old.count) conversation\(old.count == 1 ? "" : "s") past keeping went")
+    }
+
+    /// Conversations that are being deleted, kept off the screens meanwhile.
+    var hiding: Set<PersistentIdentifier> = []
+
+    /// Deletes [conversations] with their suggestions, facts and recordings, and what Ask said
+    /// about them. Safely: off the screens first (and off any page showing one), the pipeline lets
+    /// go of them, then they're deleted where the screens' copies are, so none is left pointing at one.
+    private func remove(_ conversations: [Conversation]) async {
+        guard !conversations.isEmpty else { return }
+        let context = container.mainContext
+        let keys = conversations.map(\.persistentModelID)
+        let ids = conversations.map(\.id)
+        let days = conversations.map(\.start)
+        hiding.formUnion(keys)
+        timelinePath = NavigationPath()
+        try? await Task.sleep(for: .milliseconds(350))
+        for id in ids { await pipeline.forget(id) }
+        for day in days { DayDigests.shared.forget(day: day) }
+        for c in conversations { context.delete(c) }
+        for id in ids {
+            let cid: UUID? = id
+            for item in (try? context.fetch(FetchDescriptor<ActionItem>(predicate: #Predicate { $0.conversationID == cid && $0.status == "suggested" }))) ?? [] {
+                context.delete(item)
+            }
+            for fact in (try? context.fetch(FetchDescriptor<Fact>(predicate: #Predicate { $0.conversationID == cid }))) ?? [] {
+                context.delete(fact)
+            }
+            for chunk in (try? context.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == cid }))) ?? [] {
+                context.delete(chunk)
+            }
+        }
+        try? context.save()
+        forgetAsked(about: Set(ids))
+        try? await Task.sleep(for: .milliseconds(500))
+        hiding.subtract(keys)
+    }
+
+    /// Ask's questions and answers about these conversations go; and with no conversations left
+    /// at all, nothing Ask said can stand, so all of it goes.
+    func forgetAsked(about ids: Set<UUID>) {
+        Standby.shared.forget()
+        messages.removeAll { m in (m.about ?? []).contains { ids.contains($0) } }
+        if (try? container.mainContext.fetchCount(FetchDescriptor<Conversation>())) == 0 { messages = [] }
+        ChatLog.save(messages)
+    }
+
+    /// On opening: what earlier versions got wrong put right, old conversations gone, and Ask
+    /// cleared if everything it was about has gone.
+    func tidyUp() async {
+        await pipeline.repairOnce()
+        await expireOld()
+        forgetAsked(about: [])
+    }
+
+    /// The question [from] and the answers after it: what they drew on.
+    private func tag(from id: UUID, about: Set<UUID>) {
+        guard !about.isEmpty, let i = messages.firstIndex(where: { $0.id == id }) else { return }
+        for j in i..<messages.count where messages[j].about == nil { messages[j].about = Array(about) }
+        ChatLog.save(messages)
     }
 
     /// From the Action button, a shortcut or Siri: go to Ask and ask the quick question.
@@ -250,11 +352,14 @@ final class AppModel {
     func ask(_ question: String, focus: UUID? = nil) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty, status == nil else { return }
-        add(ChatMessage(fromUser: true, text: q))
+        let asked = ChatMessage(fromUser: true, text: q)
+        add(asked)
         Brain.prewarm()
         status = "Catching up on the last few seconds\u{2026}"
         Task {
-            defer { status = nil; streaming = nil }
+            // The conversations the answer draws on: deleting one deletes the question and answer too.
+            var about = Set(focus.map { [$0] } ?? [])
+            defer { status = nil; streaming = nil; tag(from: asked.id, about: about) }
             // Close the chunk being recorded and transcribe it, so "just now" includes it (30 s at most).
             Recorder.shared.flush()
             let pipeline = pipeline
@@ -275,6 +380,7 @@ final class AppModel {
                     add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
                     return
                 }
+                about.insert(latest.id)
                 // Word for word, straight away; the AI's gist follows.
                 if let recap = QuickRecap.of(latest.transcript, start: latest.start, now: now) {
                     add(ChatMessage(fromUser: false, text: recap))
@@ -289,6 +395,7 @@ final class AppModel {
                 return
             }
             let found = await pipeline.notes(for: q, focus: focus)
+            about.formUnion(found.used)
             guard !found.notes.isEmpty else {
                 add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
                 return
@@ -327,8 +434,9 @@ final class AppModel {
         }
         if stopped, !answer.contains("listening") { answer += " WTF stopped listening, so open it to start again." }
         lastPress = Date()
-        add(ChatMessage(fromUser: true, text: Self.quickQuestion))
-        add(ChatMessage(fromUser: false, text: answer))
+        let about = await pipeline.latestConversation().map { [$0.id] }
+        add(ChatMessage(fromUser: true, text: Self.quickQuestion, about: about))
+        add(ChatMessage(fromUser: false, text: answer, about: about))
         // Waits only until it's started playing: the sound keeps the app awake to the end.
         let reading = await ReadAloud.shared.startIntoHeadphones(answer)
         Log.info("Action button: answered in \(String(format: "%.1f", Date().timeIntervalSince(pressed))) s, \(reading ? "reading it out" : "shown only")")
@@ -352,8 +460,9 @@ final class AppModel {
             step = 0
         }
         lastPress = Date()
-        add(ChatMessage(fromUser: true, text: "What came before that?"))
-        add(ChatMessage(fromUser: false, text: answer))
+        let about = await pipeline.latestConversation().map { [$0.id] }
+        add(ChatMessage(fromUser: true, text: "What came before that?", about: about))
+        add(ChatMessage(fromUser: false, text: answer, about: about))
         _ = await ReadAloud.shared.startIntoHeadphones(answer)
         return answer
     }
@@ -427,10 +536,11 @@ final class AppModel {
     func askAbout(_ thread: TopicThread, in conversation: UUID) {
         guard status == nil else { return }
         tab = 0
-        add(ChatMessage(fromUser: true, text: "Where was I with \u{201C}\(thread.title)\u{201D}?"))
+        let asked = ChatMessage(fromUser: true, text: "Where was I with \u{201C}\(thread.title)\u{201D}?")
+        add(asked)
         status = "Looking back\u{2026}"
         Task {
-            defer { status = nil; streaming = nil }
+            defer { status = nil; streaming = nil; tag(from: asked.id, about: [conversation]) }
             let lines = await pipeline.lines(of: thread, in: conversation)
             guard !lines.isEmpty else {
                 add(ChatMessage(fromUser: false, text: "I can't find what was said about that."))

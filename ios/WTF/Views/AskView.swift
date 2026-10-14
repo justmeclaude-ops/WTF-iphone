@@ -17,7 +17,7 @@ struct AskView: View {
 
     /// The latest conversation's trail, while it's fresh (the last three hours).
     private var trail: (id: UUID, threads: [TopicThread])? {
-        guard let c = latest.first, c.end > Date().addingTimeInterval(-3 * 3600) else { return nil }
+        guard let c = latest.first, !model.hiding.contains(c.persistentModelID), c.end > Date().addingTimeInterval(-3 * 3600) else { return nil }
         let threads = c.threads
         return threads.isEmpty ? nil : (c.id, threads)
     }

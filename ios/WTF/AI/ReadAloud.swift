@@ -49,6 +49,9 @@ final class ReadAloud: NSObject {
     }
 
     /// The answer kept ready for the Action button: its sound made now, so a press just plays it.
+    /// The sound made ready goes (what it says may have been deleted).
+    func forget() { prepared = nil }
+
     func prepare(_ text: String) async {
         let key = Self.key(text, Self.voice, Self.speed)
         guard prepared?.key != key else { return }

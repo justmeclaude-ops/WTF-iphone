@@ -18,6 +18,7 @@ struct WTFApp: App {
                     // Carry on listening if it was on when the app last ran.
                     Log.info("App started (build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
                     if !ListeningActivity.drawable { Log.error("WTF's widget extension isn't installed: no pill, Lock Screen card or controls") }
+                    await model.tidyUp()
                     model.resumeIfNeeded()
                     model.processNow()
                 }
@@ -33,6 +34,7 @@ struct WTFApp: App {
             if now == .active {
                 model.resumeIfNeeded()
                 model.processNow()
+                Task { await model.expireOld() }
             }
         }
     }
@@ -42,8 +44,21 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        if model.wiping {
+            // Settings › Delete All Recordings, under way: no screen is left reading what's going.
+            VStack(spacing: 14) {
+                ProgressView()
+                Text("Deleting everything\u{2026}").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            tabs
+        }
+    }
+
+    private var tabs: some View {
         @Bindable var model = model
-        TabView(selection: $model.tab) {
+        return TabView(selection: $model.tab) {
             Tab("Ask", systemImage: "bubble.left.and.text.bubble.right", value: 0) { AskView().modifier(TabSwipe()) }
             Tab("Timeline", systemImage: "clock", value: 1) { TimelineView().modifier(TabSwipe()) }
             Tab("Lists", systemImage: "checklist", value: 2) { ListsView().modifier(TabSwipe()) }

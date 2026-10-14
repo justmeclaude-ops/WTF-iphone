@@ -18,6 +18,12 @@ final class ListeningActivity {
     /// Whether Live Activities are allowed for WTF (Settings › Apps › WTF › Live Activities).
     static var allowed: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
+    /// For Diagnostics: the cards iOS has for WTF right now, and how they stand.
+    static var states: String {
+        let all = Activity<ListeningAttributes>.activities
+        return all.isEmpty ? "none" : all.map { String(describing: $0.activityState) }.joined(separator: ", ")
+    }
+
     private var activity: Activity<ListeningAttributes>?
     private var state = ListeningAttributes.ContentState(topic: nil, trail: [], since: Date(), hanging: 0)
 

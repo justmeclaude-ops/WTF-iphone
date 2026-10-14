@@ -10,9 +10,11 @@ struct TimelineView: View {
     @State private var query = ""
 
     private var shown: [Conversation] {
+        // Not ones being deleted: a row left showing one as it goes would crash the app.
+        let visible = conversations.filter { !model.hiding.contains($0.persistentModelID) }
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard q.count >= 2 else { return conversations }
-        return conversations.filter { c in
+        guard q.count >= 2 else { return visible }
+        return visible.filter { c in
             [c.title, c.summary, c.transcript].contains { $0?.lowercased().contains(q) == true }
         }
     }
@@ -64,7 +66,8 @@ struct TimelineView: View {
                                     }
                                     ShareLink(item: shareText(c)) { Label("Share", systemImage: "square.and.arrow.up") }
                                     Button("Delete", systemImage: "trash", role: .destructive) {
-                                        Task { await model.pipeline.deleteConversation(c.id) }
+                                        let id = c.id
+                                        Task { await model.deleteConversation(id) }
                                     }
                                 }
                         }
@@ -356,8 +359,9 @@ struct ConversationView: View {
         }
         .confirmationDialog("Delete this conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete", role: .destructive) {
-                Task { await model.pipeline.deleteConversation(conversation.id) }
+                let id = conversation.id
                 dismiss()
+                Task { await model.deleteConversation(id) }
             }
         }
     }

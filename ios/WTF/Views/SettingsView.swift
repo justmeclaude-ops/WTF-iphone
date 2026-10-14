@@ -25,6 +25,16 @@ struct SettingsView: View {
         @Bindable var model = model
         NavigationStack(path: $model.settingsPath) {
             Form {
+                if !ListeningActivity.drawable {
+                    Section {
+                        Label {
+                            Text("The listening pill, the Lock Screen card and WTF\u{2019}s Control Center buttons can\u{2019}t show: the part of WTF that draws them isn\u{2019}t installed on this iPhone. Reinstall WTF, and if AltStore asks about app extensions, keep them.")
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                        .font(.footnote)
+                    }
+                }
                 Section {
                     Toggle("Listen Continuously", isOn: Binding(get: { model.recording }, set: { model.setListening($0) })).tint(.green)
                 } footer: {
