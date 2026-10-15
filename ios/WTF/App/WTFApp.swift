@@ -73,6 +73,14 @@ struct RootView: View {
             WelcomeSheet { welcomed = true }
                 .interactiveDismissDisabled()
         }
+        .alert("Couldn\u{2019}t start listening", isPresented: Binding(get: { model.startFailed != nil }, set: { if !$0 { model.startFailed = nil } })) {
+            if model.startFailed?.contains("microphone:") == true {
+                Button("Open Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.startFailed ?? "")
+        }
         .sheet(isPresented: $model.stopSheet) {
             StopListeningSheet()
                 .presentationDetents([.medium])
@@ -170,7 +178,7 @@ struct ListeningButton: View {
                 } else {
                     Image(systemName: "mic")
                 }
-                Text(model.recording ? "Listening" : "Listen").font(.subheadline.weight(.medium))
+                Text(model.recording ? "Listening" : model.isStarting ? "Starting\u{2026}" : "Listen").font(.subheadline.weight(.medium))
             }
             .foregroundStyle(.primary)
             .padding(.horizontal, 4)

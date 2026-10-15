@@ -45,6 +45,10 @@ final class AppModel {
     /// When the Action button (or another WTF shortcut or control) was last pressed: for the
     /// setup page's "It works".
     var buttonPressedAt: Date?
+    /// A start is under way (the first can include downloading the speech model).
+    var isStarting = false
+    /// Why a start you asked for in the app didn't work, for an alert wherever you are.
+    var startFailed: String?
     /// Whether anything's been heard to answer "what was I saying?" from. Until it has, there's
     /// nothing to say, so the card, the pill and the stop sheet don't offer it.
     var hasHeard = false
@@ -98,7 +102,9 @@ final class AppModel {
 
     func setListening(_ on: Bool) {
         if on {
-            Task { _ = await startListening() }
+            Task {
+                if !(await startListening()), let problem { startFailed = problem }
+            }
         } else {
             Recorder.shared.stop()
             recording = false
@@ -129,8 +135,10 @@ final class AppModel {
         if let starting { return await starting.value }
         let start = Task { await startListeningNow() }
         starting = start
+        isStarting = true
         let started = await start.value
         starting = nil
+        isStarting = false
         return started
     }
 
@@ -215,6 +223,12 @@ final class AppModel {
     /// first and it starts there: nothing's tried in the background, where a try only fails, and
     /// with WTF already open it just starts. Without [forward] (a control) it tries where it is.
     func startListeningFromShortcut(forward: ComeForward? = nil) async -> Bool {
+        // Apple's rule for recording shortcuts: listening started from one needs its Lock Screen
+        // card, and with Live Activities turned off there isn't one.
+        guard ListeningActivity.allowed else {
+            problem = "To start listening from here, turn on Live Activities for WTF (Settings \u{203A} Apps \u{203A} WTF). Or open WTF and tap Listen."
+            return false
+        }
         if let forward, UIApplication.shared.applicationState == .background, !Recorder.shared.running {
             guard await forward() else {
                 problem = "iOS didn\u{2019}t let WTF switch the microphone on from here. Open WTF to start listening."

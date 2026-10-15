@@ -9,6 +9,8 @@ struct TimelineView: View {
     @Query(filter: #Predicate<Chunk> { $0.status == "pending" }) private var pending: [Chunk]
     @State private var query = ""
     @State private var deleting: Conversation?
+    @State private var renaming: Conversation?
+    @State private var newTitle = ""
 
     private var shown: [Conversation] {
         // Not ones being deleted: a row left showing one as it goes would crash the app.
@@ -66,6 +68,7 @@ struct TimelineView: View {
                                         }
                                     }
                                     ShareLink(item: shareText(c)) { Label("Share", systemImage: "square.and.arrow.up") }
+                                    Button("Rename\u{2026}", systemImage: "pencil") { newTitle = c.title ?? ""; renaming = c }
                                     Button("Delete", systemImage: "trash", role: .destructive) { deleting = c }
                                 }
                         }
@@ -86,6 +89,18 @@ struct TimelineView: View {
             .searchable(text: $query, prompt: "Search everything you've heard")
             .refreshable { await model.pipeline.run() }
             .navigationTitle("Timeline")
+            .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Title", text: $newTitle)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    let t = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let c = renaming, !t.isEmpty {
+                        c.title = t
+                        if c.summary == nil { c.summary = "" } // named by you: not summarised over
+                        try? c.modelContext?.save()
+                    }
+                }
+            }
             .confirmationDialog("Delete this conversation?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
                     if let id = deleting?.id { Task { await model.deleteConversation(id) } }

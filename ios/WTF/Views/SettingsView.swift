@@ -36,7 +36,7 @@ struct SettingsView: View {
                     }
                 }
                 Section {
-                    Toggle("Listen Continuously", isOn: Binding(get: { model.recording }, set: { model.setListening($0) })).tint(.green)
+                    Toggle("Listen Continuously", isOn: Binding(get: { model.recording || model.isStarting }, set: { model.setListening($0) })).tint(.green)
                 } footer: {
                     Text("Only speech is kept: silence and music are never stored, and audio is deleted once its conversation is over. iPhones stop apps that are swiped away, so leave WTF open in the background.")
                 }
