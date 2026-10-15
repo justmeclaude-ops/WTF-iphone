@@ -47,15 +47,15 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 ## Ask and answers
 - [x] **Questions about conversations are answered from the Lists**: "Ask About This" on "Team meeting…" gives "I haven't heard about any upcoming appointments"; "What did I promise Tom?" lists the to-dos. Skip list answers when `focus` is set; treat did/tell/told/decide/happened/who/why as past; to-do questions list only to-dos. (WTFCore Transcript.swift `ListAnswers`, AppModel.swift `ask`)
 - [ ] **Deleted conversations' answers can survive**: answers are tagged only in `ask()`'s `defer`, so a delete mid-answer misses them, and Delete All mid-answer leaves an orphan. Tag as messages are added, and drop answers whose question was deleted. (AppModel.swift `ask`, `askAbout`, `answer`)
-- [ ] **Deleting any of the 12 most recent conversations (or its expiry) wipes recent answers**, because each answer is tagged with all 12. Tag only `focus` + `best`. (Pipeline.swift `notes`, AppModel.swift)
+- [x] **Deleting any of the 12 most recent conversations (or its expiry) wipes recent answers**, because each answer is tagged with all 12. Tag only `focus` + `best`. (Pipeline.swift `notes`, AppModel.swift)
 - [x] **Rewordings miss the quick path**: "What were we talking about?", "Where were we?", "Remind me what I was saying", "What was the last thing I said?". (WTFCore Prompts.swift `latest`)
 - [ ] **General-question prompt isn't held to the 4k context** (12 titles + summaries unbudgeted; facts uncounted) → "Apple Intelligence couldn't answer that one". Budget the notes; retry smaller on context overflow. (WTFCore Prompts.swift `focused`, Understanding.swift `background`)
 - [x] **No time limit on a streamed answer**: if it stalls, "Thinking…" stays and Ask is stuck until relaunch. Cancel after ~30 s with no new text. (AppModel.swift `answer`, Brain.swift `ask`)
 - [ ] **"Summarise my day so far" isn't a day summary** (generic prompt over the 12 latest from any day). Route to the Your Day recap. (AppModel.swift `ask`)
 - [x] **Times aren't relative to now** (recaps now say the day; the AI prompts still to do): a recap of a conversation two days ago says "At 09:12 you were saying"; the latest/spoken prompts never say when the conversation was, so the AI says "you were just…" about yesterday. (WTFCore QuickRecap.swift `ago`, Prompts.swift)
 - [x] Spoken fallback says "Then Speech cut in." and skips your newest words. (WTFCore QuickRecap.swift `spoken`)
-- [ ] **Follow-up buttons point at the wrong conversation** ("Summarise This" uses the latest, not the one asked about); "Add to Calendar" only switches tab; "Make a To-do List" only asks a question; they show under list answers and "not ready" messages too. (AskView.swift `FollowUps`)
-- [ ] **"Before that" window is used up by the reading** (a 15 s answer leaves ~5 s of the 20 s window); with nothing earlier, pressing again repeats the answer instead of "Nothing before that"; each step is logged as "WTF was I just on about?". (AppModel.swift `answerFromShortcut`, ReadAloud.swift)
+- [x] **Follow-up buttons point at the wrong conversation** ("Summarise This" uses the latest, not the one asked about); "Add to Calendar" only switches tab; "Make a To-do List" only asks a question; they show under list answers and "not ready" messages too. (AskView.swift `FollowUps`)
+- [x] **"Before that" window is used up by the reading** (a 15 s answer leaves ~5 s of the 20 s window); with nothing earlier, pressing again repeats the answer instead of "Nothing before that"; each step is logged as "WTF was I just on about?". (AppModel.swift `answerFromShortcut`, ReadAloud.swift)
 - [x] Empty grey bubble when `tidy` strips everything ("Sure!"); raw framework error text in the error bubble; "Turn on listening…" shown while listening; Read My List gives only the weekday for far-off dates.
 - [ ] Unknown on device: whether the answer queues behind other AI work started by the flush, and whether Return in the multi-line field sends while busy (losing the question).
 
@@ -71,7 +71,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] Lists' tick button has no accessibility label ("circle, button"). (ListsView.swift)
 - [x] Meaningful text in `.tertiary` (≈2:1 contrast): "Left hanging", "+ N more", "Writing it up…". Use `.secondary`. (TimelineView.swift, DayView.swift)
 - [x] Stop sheet is a fixed 330 pt high; large text clips it. Use `.medium`. (WTFApp.swift)
-- [ ] Your Day can read "One conversation, at 10:42: Listening…." (placeholder titles in the plain recap). (DayView.swift, WTFCore Day.swift)
+- [x] Your Day can read "One conversation, at 10:42: Listening…." (placeholder titles in the plain recap). (DayView.swift, WTFCore Day.swift)
 - [ ] Time column (58 pt) wraps "10:42 AM" at large text; transcript times always 24-hour. (TimelineView.swift)
 - [ ] Raw system errors shown to users (AppModel.swift, SettingsView.swift).
 - [ ] Wording: "Threads" vs "topics"; "Not Now" dismisses permanently; "3 segments waiting / Process Now" is jargon; "New after 5 min of silence" doesn't say what's new; "Heard today…" while older suggestions stay; empty states say "Turn on listening" while listening; Your Day "To Do" vs Lists "To-dos".

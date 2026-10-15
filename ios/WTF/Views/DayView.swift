@@ -12,7 +12,7 @@ extension Conversation {
     var dayNote: DayNote {
         let m = memory
         let hanging = threads.filter { $0.status == .hanging }.map { t in t.leftAt.map { "\(t.title): \($0)" } ?? t.title } + m.open
-        return DayNote(start: start, title: displayTitle(self),
+        return DayNote(start: start, title: title ?? "",
                        points: summary?.split(separator: "\n").map(String.init) ?? [],
                        decided: m.decided, todo: m.todo, hanging: hanging)
     }

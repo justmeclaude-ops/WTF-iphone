@@ -297,7 +297,7 @@ actor Pipeline {
         }
         let best = pool.map { ($0, rank($0)) }.max { $0.1 < $1.1 }?.0
         let notes = pool.prefix(12).map { (label: label($0), title: $0.title, summary: $0.summary) }
-        var used = pool.prefix(12).map(\.id)
+        var used = focus.map { [$0] } ?? []
         guard let best else { return (notes, nil, "", used) }
         if !used.contains(best.id) { used.append(best.id) }
         // A long conversation: the lines that bear on the question (and the ones either side), not just its end.

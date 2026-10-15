@@ -78,7 +78,7 @@ struct TimelineView: View {
             .overlay {
                 if conversations.isEmpty && pending.isEmpty {
                     ContentUnavailableView("No Conversations", systemImage: "waveform",
-                                           description: Text("Turn on listening and your conversations will appear here."))
+                                           description: Text(model.recording ? "Your conversations will appear here once WTF has heard some talking." : "Turn on listening and your conversations will appear here."))
                 } else if !query.isEmpty && shown.isEmpty {
                     ContentUnavailableView.search(text: query)
                 }

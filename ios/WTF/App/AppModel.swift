@@ -398,7 +398,7 @@ final class AppModel {
             let latest = await pipeline.latestConversation()
             if focus == nil, intent == .latest {
                 guard let latest else {
-                    add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
+                    add(ChatMessage(fromUser: false, text: recording ? "I haven't heard anything yet. Keep talking and I'll keep track." : "I haven't heard anything yet. Turn on listening and I'll keep track."))
                     return
                 }
                 about.insert(latest.id)
@@ -418,7 +418,7 @@ final class AppModel {
             let found = await pipeline.notes(for: q, focus: focus)
             about.formUnion(found.used)
             guard !found.notes.isEmpty else {
-                add(ChatMessage(fromUser: false, text: "I haven't heard anything yet. Turn on listening and I'll keep track."))
+                add(ChatMessage(fromUser: false, text: recording ? "I haven't heard anything yet. Keep talking and I'll keep track." : "I haven't heard anything yet. Turn on listening and I'll keep track."))
                 return
             }
             await answer(Prompts.focused(question: q, notes: found.notes, best: found.best, now: now, background: found.background))
@@ -468,10 +468,16 @@ final class AppModel {
         // answer says so, as it only covers what was heard before then.
         let stopped = !recording && UserDefaults.standard.bool(forKey: "listening")
         var answer: String
-        if pressed.timeIntervalSince(lastPress) < 20, backstory.indices.contains(step) {
+        let again = pressed.timeIntervalSince(lastPress) < 20
+        var stepped = true
+        if again, backstory.indices.contains(step) {
             answer = backstory[step]
             step += 1
+        } else if again, backstory.isEmpty, step == 0 {
+            answer = "Nothing before that: it's all been one topic so far."
+            step = 1
         } else {
+            stepped = false
             answer = await Standby.shared.answerNow()
             let threads = await pipeline.latestThreads()
             backstory = Threads.backstory(threads)
@@ -484,7 +490,7 @@ final class AppModel {
         if stopped, !answer.contains("listening") { answer += " WTF stopped listening, so open it to start again." }
         lastPress = Date()
         let about = await pipeline.latestConversation().map { [$0.id] }
-        add(ChatMessage(fromUser: true, text: Self.quickQuestion, about: about))
+        add(ChatMessage(fromUser: true, text: stepped ? "What came before that?" : Self.quickQuestion, about: about))
         add(ChatMessage(fromUser: false, text: answer, about: about))
         // Waits only until it's started playing: the sound keeps the app awake to the end.
         let reading = await ReadAloud.shared.startIntoHeadphones(answer)

@@ -59,7 +59,7 @@ struct AskView: View {
                         }
                         if let last = model.messages.last, !last.fromUser, !last.isError, model.status == nil,
                            last.date > Date().addingTimeInterval(-1800) {
-                            FollowUps(conversation: latest.first?.id).padding(.top, 6)
+                            FollowUps(conversation: model.messages.last?.about?.first ?? latest.first?.id).padding(.top, 6)
                         }
                         if let s = model.streaming, !s.isEmpty {
                             Bubble(message: ChatMessage(fromUser: false, text: s), tail: true).padding(.top, 8)
@@ -266,8 +266,7 @@ struct FollowUps: View {
                 Button("Summarise This", systemImage: "text.alignleft") {
                     model.ask("Summarise this conversation", focus: conversation)
                 }
-                Button("Add to Calendar", systemImage: "calendar") { model.tab = 2 }
-                Button("Make a To-do List", systemImage: "checklist") {
+                Button("What Did I Say I\u{2019}d Do?", systemImage: "checklist") {
                     model.ask("What did I say I'd do?", focus: conversation)
                 }
             }

@@ -55,10 +55,10 @@ public enum DayReview {
     public static func plain(_ notes: [DayNote], time: (Date) -> String) -> String {
         let sorted = notes.sorted { $0.start < $1.start }
         guard let first = sorted.first, let last = sorted.last else { return "Nothing was heard." }
-        let titles = sorted.map(\.title)
-        let about = titles.prefix(4).joined(separator: ", ") + (titles.count > 4 ? " and \(titles.count - 4) more" : "")
-        if sorted.count == 1 { return "One conversation, at \(time(first.start)): \(about)." }
-        return "\(sorted.count) conversations, between \(time(first.start)) and \(time(last.start)): \(about)."
+        let titles = sorted.map(\.title).filter { !$0.isEmpty } // untitled: still being written up
+        let about = titles.isEmpty ? "" : ": " + titles.prefix(4).joined(separator: ", ") + (titles.count > 4 ? " and \(titles.count - 4) more" : "")
+        if sorted.count == 1 { return "One conversation, at \(time(first.start))\(about)." }
+        return "\(sorted.count) conversations, between \(time(first.start)) and \(time(last.start))\(about)."
     }
 }
 
