@@ -71,24 +71,24 @@ public enum Prompts {
         """
 
     /// "What was I just on about?": only the last few minutes of the latest conversation.
-    public static func latest(question: String, transcript: String, topic: String?, now: Date, background: String = "") -> String {
+    public static func latest(question: String, transcript: String, topic: String?, now: Date, background: String = "", start: Date? = nil) -> String {
         """
         \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first, each line with the time it was said; the last line is the most recent:
         \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 900 : 700))
 
-        (It's \(clock(now)) now.) In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \
+        (It's \(clock(now)) now.\(when(start, now: now))) In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \
         unfinished, say what I was in the middle of saying. Only say I was interrupted if someone else spoke after me.
         My question: \(question)
         """
     }
 
     /// The same, for reading aloud in your ear: one or two short sentences, no lists.
-    public static func spoken(transcript: String, topic: String?, leftAt: String?, now: Date, background: String = "") -> String {
+    public static func spoken(transcript: String, topic: String?, leftAt: String?, now: Date, background: String = "", start: Date? = nil) -> String {
         """
         \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), oldest first; the last line is the most recent:
         \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 700 : 550))
         \(leftAt.map { "\nEarlier, I dropped a topic part-way: \($0)\n" } ?? "")
-        (It's \(clock(now)) now.) In one or two short sentences that will be read aloud to me, say what I was just \
+        (It's \(clock(now)) now.\(when(start, now: now))) In one or two short sentences that will be read aloud to me, say what I was just \
         talking about and, if I trailed off, what I was in the middle of saying. No lists, no quotation marks.
         """
     }
@@ -155,6 +155,16 @@ public enum Prompts {
         var seen = Set<String>()
         return Rx(#"[A-Za-z][A-Za-z']+"#).all(question).map { $0[0].lowercased() }
             .filter { $0.count >= 3 && !stop.contains($0) && seen.insert($0).inserted }
+    }
+
+    /// " That conversation was yesterday." when it wasn't today, so it isn't called "just now".
+    static func when(_ start: Date?, now: Date) -> String {
+        guard let start, !Calendar.current.isDate(start, inSameDayAs: now) else { return "" }
+        if let y = Calendar.current.date(byAdding: .day, value: -1, to: now), Calendar.current.isDate(start, inSameDayAs: y) {
+            return " That conversation was yesterday, so say so rather than \"just\"."
+        }
+        let f = DateFormatter(); f.dateFormat = "EEEE d MMMM"
+        return " That conversation was on \(f.string(from: start)), so say when rather than \"just\"."
     }
 
     static func clock(_ d: Date) -> String {

@@ -160,7 +160,7 @@ struct SuggestionRow: View {
                 }
                 HStack {
                     Button(item.type == "EVENT" ? "Add to Calendar" : "Add", action: onAccept).buttonStyle(.bordered)
-                    Button("Not Now", action: onDismiss).buttonStyle(.borderless).foregroundStyle(.secondary)
+                    Button("Dismiss", action: onDismiss).buttonStyle(.borderless).foregroundStyle(.secondary)
                 }
                 .buttonBorderShape(.capsule)
                 .padding(.top, 4)

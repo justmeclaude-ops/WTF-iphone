@@ -38,13 +38,28 @@ final class ListeningActivity {
         }
         state = ListeningAttributes.ContentState(topic: nil, trail: [], since: Date(), hanging: 0, heard: AppModel.shared.hasHeard)
         do {
-            activity = try Activity.request(attributes: ListeningAttributes(), content: ActivityContent(state: state, staleDate: nil))
+            activity = try Activity.request(attributes: ListeningAttributes(), content: ActivityContent(state: state, staleDate: Self.fresh))
+            heartbeat?.cancel()
+            heartbeat = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(300))
+                    guard let self, let current = self.activity else { return }
+                    await current.update(ActivityContent(state: self.state, staleDate: Self.fresh))
+                }
+            }
         } catch {
             Log.error("Lock Screen card didn't start", error)
         }
     }
 
+    /// How long the card counts as up to date: if WTF stops updating it (closed, or crashed), it
+    /// stops saying "Recording" after this.
+    private static var fresh: Date { Date().addingTimeInterval(15 * 60) }
+    private var heartbeat: Task<Void, Never>?
+
     func stop() {
+        heartbeat?.cancel()
+        heartbeat = nil
         activity = nil
         for ending in Activity<ListeningAttributes>.activities {
             Task { await ending.end(nil, dismissalPolicy: .immediate) }
@@ -65,7 +80,7 @@ final class ListeningActivity {
         state.hanging = Threads.hanging(threads).count
         state.earlier = !Threads.backstory(threads).isEmpty
         if !threads.isEmpty { state.heard = true }
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: Self.fresh)
         let current = activity
         Task { await current?.update(content) }
     }
@@ -75,7 +90,7 @@ final class ListeningActivity {
     func heard(_ heard: Bool) {
         guard state.heard != heard else { return }
         state.heard = heard
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: Self.fresh)
         let current = activity
         Task { await current?.update(content) }
     }
@@ -88,13 +103,13 @@ final class ListeningActivity {
         answers += 1
         let mine = answers
         state.answer = String(text.prefix(280))
-        let content = ActivityContent(state: state, staleDate: nil)
+        let content = ActivityContent(state: state, staleDate: Self.fresh)
         Task {
             await current.update(content, alertConfiguration: AlertConfiguration(title: "WTF", body: "\(text)", sound: .default))
             try? await Task.sleep(for: .seconds(90))
             guard mine == answers, let now = activity else { return }
             state.answer = nil
-            await now.update(ActivityContent(state: state, staleDate: nil))
+            await now.update(ActivityContent(state: state, staleDate: Self.fresh))
         }
     }
 

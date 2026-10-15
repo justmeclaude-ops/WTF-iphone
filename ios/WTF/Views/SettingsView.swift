@@ -99,7 +99,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Stepper("New after \(gapMinutes) min of silence", value: $gapMinutes, in: 1...30)
+                    Stepper("New conversation after \(gapMinutes) min quiet", value: $gapMinutes, in: 1...30)
                     Picker("Keep Transcripts", selection: $keepDays) {
                         ForEach([1, 3, 7, 14, 30, 90, 365], id: \.self) { Text($0 == 1 ? "1 day" : "\($0) days").tag($0) }
                     }

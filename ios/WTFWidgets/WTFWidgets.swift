@@ -140,7 +140,16 @@ struct SmallControl<I: AppIntent>: View {
 struct ListeningLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: ListeningAttributes.self) { context in
-            LockScreenCard(state: context.state)
+            Group {
+                if context.isStale {
+                    // WTF stopped updating it (closed, or crashed): it isn't recording.
+                    Label("Not recording. Open WTF to listen.", systemImage: "mic.slash")
+                        .font(.headline).foregroundStyle(.white).padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    LockScreenCard(state: context.state)
+                }
+            }
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
                 .widgetURL(URL(string: "wtf://ask"))
@@ -158,7 +167,7 @@ struct ListeningLiveActivity: Widget {
                     Elapsed(since: s.since, font: .caption).frame(width: 56, alignment: .trailing)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(s.answer == nil ? (s.topic ?? "") : "").font(.headline).lineLimit(1)
+                    Text(context.isStale ? "Not recording" : s.answer == nil ? (s.topic ?? "") : "").font(.headline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     CardBody(state: s, inIsland: true).padding(.top, 2)

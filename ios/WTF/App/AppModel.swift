@@ -408,7 +408,7 @@ final class AppModel {
                 }
                 guard Brain.notReadyReason == nil else { return }
                 let background = await pipeline.latestBackground()
-                await answer(Prompts.latest(question: q, transcript: latest.transcript, topic: latest.title, now: now, background: background))
+                await answer(Prompts.latest(question: q, transcript: latest.transcript, topic: latest.title, now: now, background: background, start: latest.start))
                 return
             }
             if let why = Brain.notReadyReason {
@@ -578,7 +578,7 @@ final class AppModel {
             let hanging = Threads.hanging(threads).first.map { "\($0.title): \($0.leftAt ?? "")" }
             let topic = threads.last(where: { $0.status == .current })?.title ?? latest?.title
             let background = await pipeline.latestBackground()
-            if let gist = await Brain.quick(Prompts.spoken(transcript: transcript, topic: topic, leftAt: hanging, now: now, background: background), seconds: ai)?
+            if let gist = await Brain.quick(Prompts.spoken(transcript: transcript, topic: topic, leftAt: hanging, now: now, background: background, start: latest?.start), seconds: ai)?
                 .trimmingCharacters(in: .whitespacesAndNewlines), !gist.isEmpty {
                 return (gist, covers, true)
             }

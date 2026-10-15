@@ -116,9 +116,9 @@ struct TranscribingRow: View {
                 }
                 ProgressView()
             } else {
-                Text("\(pending) segment\(pending == 1 ? "" : "s") waiting")
+                Text("\(pending) recording\(pending == 1 ? "" : "s") still to transcribe")
                 Spacer()
-                Button("Process Now") { model.processNow() }
+                Button("Transcribe Now") { model.processNow() }
                     .sensoryFeedback(.selection, trigger: model.transcribing != nil)
             }
         }
@@ -281,7 +281,7 @@ struct ConversationView: View {
                 Section("Summary") { Text(summary) }
             }
             if !conversation.threads.isEmpty {
-                Section("Threads") {
+                Section("Topics") {
                     ThreadList(threads: conversation.threads) { model.askAbout($0, in: conversation.id) }
                 }
             }
