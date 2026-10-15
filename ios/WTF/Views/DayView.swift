@@ -52,7 +52,7 @@ struct YourDayRow: View {
                 .font(.subheadline).foregroundStyle(.secondary)
                 .lineLimit(5)
             if writing {
-                Text("Writing it up\u{2026}").font(.caption).foregroundStyle(.tertiary)
+                Text("Writing it up\u{2026}").font(.caption).foregroundStyle(.secondary)
             }
             let counts = Self.counts(notes)
             if !counts.isEmpty {

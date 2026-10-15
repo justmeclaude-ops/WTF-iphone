@@ -31,7 +31,7 @@ final class ReadAloud: NSObject {
     }
 
     private static var route: String {
-        AVAudioSession.sharedInstance().currentRoute.outputs.map { "\($0.portName) (\($0.portType.rawValue))" }.joined(separator: ", ")
+        AVAudioSession.sharedInstance().currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ", ")
     }
 
     /// For the Action button: starts reading [text] into the headphones and returns as soon as
@@ -126,6 +126,7 @@ final class ReadAloud: NSObject {
             Task {
                 await heard()
                 guard mine == self.reading else { return }
+                Recorder.shared.speaking = false
                 self.player.stop()
                 self.engine.stop()
                 if ownSession { self.releaseSession() }
@@ -181,6 +182,7 @@ final class ReadAloud: NSObject {
                 player.scheduleBuffer(buffer, completionHandler: nil)
             }
         }
+        Recorder.shared.speaking = true // what WTF says isn't recorded
         player.play()
         return {
             await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in

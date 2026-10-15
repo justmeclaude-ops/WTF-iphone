@@ -66,11 +66,11 @@ struct ListsView: View {
                         if item.type == "EVENT" {
                             Button("Add to Calendar", systemImage: "calendar.badge.plus") { calendarItem = item }
                         }
-                        Button("Delete", systemImage: "trash", role: .destructive) { context.delete(item); save() }
+                        Button("Delete", systemImage: "trash", role: .destructive) { item.status = "dismissed"; save() }
                     }
             }
             .onDelete { offsets in
-                for i in offsets { context.delete(kept[i]) }
+                for i in offsets { kept[i].status = "dismissed" } // kept as dismissed, so it isn't suggested again
                 save()
             }
             if group.canAdd {
@@ -186,6 +186,7 @@ struct CheckRow: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Done")
             .sensoryFeedback(.success, trigger: ticking) { _, now in now }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).foregroundStyle(ticking ? .secondary : .primary)

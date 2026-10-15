@@ -204,6 +204,13 @@ final class RecapAndRulesTests: XCTestCase {
         XCTAssertNil(MicTrouble.reason(-10875))
     }
 
+    func testMoreWaysOfAskingWhatIWasSaying() {
+        for q in ["What were we talking about?", "Where were we?", "Remind me what I was saying", "What was the last thing I said?"] {
+            XCTAssertEqual(Prompts.intent(q), .latest, q)
+        }
+        XCTAssertEqual(Prompts.intent("What were we talking about yesterday?"), .focused)
+    }
+
     func testVadHearsSpeechOverQuiet() {
         var vad = EnergyVad()
         let quiet = [Float](repeating: 0.001, count: 480)

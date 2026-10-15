@@ -30,6 +30,12 @@ final class Recorder: @unchecked Sendable {
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
     private(set) var running = false
+    /// WTF is reading an answer aloud: what the microphone hears meanwhile is dropped, so WTF
+    /// doesn't transcribe (and act on) its own voice.
+    var speaking = false {
+        didSet { if speaking { speakingSince = Date() } }
+    }
+    private var speakingSince = Date.distantPast
 
     // Chunking state, only touched on [queue].
     private static let frame = 480 // 30 ms
@@ -241,6 +247,13 @@ final class Recorder: @unchecked Sendable {
             freshEngine()
             try installTap()
         } catch {
+            // A call or Siri has the microphone: still listening, just stalled; it comes back when
+            // the interruption ends (or WTF's opened again), rather than stopping for good.
+            let code = (error as NSError).code
+            if [MicTrouble.code("!pri"), MicTrouble.code("siri"), MicTrouble.code("!int")].contains(code) {
+                Log.info("The microphone's busy (a call or Siri); listening carries on when it's free")
+                throw error
+            }
             running = false
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             onStopped?()
@@ -296,6 +309,8 @@ final class Recorder: @unchecked Sendable {
     }
 
     private func consume(_ samples: [Float], at heard: Date) {
+        // (At most two minutes, in case the end of a reading is never heard.)
+        if speaking, heard.timeIntervalSince(speakingSince) < 120 { return }
         pending.append(contentsOf: samples)
         let frames = pending.count / Self.frame
         guard frames > 0 else { return }

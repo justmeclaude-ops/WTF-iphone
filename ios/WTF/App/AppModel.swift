@@ -411,6 +411,13 @@ final class AppModel {
         }
     }
 
+    /// Settings › People › Forget: deleted where the People list's copies are (deleting it from the
+    /// pipeline's own context while the list showed it could crash).
+    func forgetPerson(_ person: Person) {
+        container.mainContext.delete(person)
+        try? container.mainContext.save()
+    }
+
     /// Whether there's anything to answer "what was I saying?" from (see hasHeard).
     func heardSomething(_ heard: Bool) {
         guard hasHeard != heard else { return }

@@ -8,7 +8,7 @@ public enum RecallIntent: Equatable, Sendable { case latest, digest, commitments
 public enum Prompts {
     static let commitment = Rx(#"promis|said i'?d|i said i would|to-?do|commit|agreed to|supposed to|\bowe\b|need to do|have to do"#)
     static let digest = Rx(#"summar|recap|my day|overview|what did i do|what have i (done|been doing)|everything"#)
-    static let latest = Rx(#"\bjust\b|a (minute|moment|sec|second)s? ago|right now|where was i|lost (my|the) (train|thread)|interrupted|on about|what was i (saying|talking)"#)
+    static let latest = Rx(#"\bjust\b|a (minute|moment|sec|second)s? ago|right now|where was i|lost (my|the) (train|thread)|interrupted|on about|what was i (just )?(saying|talking|on)|where were we|what were we (just )?(saying|talking|on)|remind me what (i|we) (was|were) (saying|talking)|last thing (i|we) said"#)
     static let timeWords = Rx(#"\b(yesterday|this morning|last night|earlier|today|afternoon|evening|lunch|hours? ago)\b"#)
 
     public static func intent(_ question: String) -> RecallIntent {

@@ -31,7 +31,8 @@ struct WTFListeningControlIntent: LiveActivityIntent, AudioRecordingIntent {
 
     func perform() async throws -> some IntentResult {
         #if !WIDGET
-        _ = await AppModel.shared.toggleListeningFromShortcut()
+        let result = await AppModel.shared.toggleListeningFromShortcut()
+        await AppModel.shared.showAnswer(result)
         #endif
         return .result()
     }

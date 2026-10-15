@@ -103,7 +103,9 @@ struct SettingsView: View {
                     Picker("Keep Transcripts", selection: $keepDays) {
                         ForEach([1, 3, 7, 14, 30, 90, 365], id: \.self) { Text($0 == 1 ? "1 day" : "\($0) days").tag($0) }
                     }
-                } header: { Text("Conversations") }
+                } header: { Text("Conversations") } footer: {
+                    Text("Older conversations are deleted, with their recordings. Your lists and the things WTF knows are kept.")
+                }
 
                 Section {
                     NavigationLink("Set Up Action Button", value: "button")
@@ -124,7 +126,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Button("Delete All Recordings\u{2026}", role: .destructive) { confirmWipe = true }
+                    Button("Delete All Data\u{2026}", role: .destructive) { confirmWipe = true }
                 } footer: {
                     Text("Everything stays on this iPhone. Speech is transcribed and summarised on the device; nothing is uploaded.")
                 }
@@ -143,8 +145,10 @@ struct SettingsView: View {
                 }
             }
             .task { speechReady = await SpeechEngine.shared.isReady() }
-            .confirmationDialog("Delete every conversation, transcript, list item and voice?", isPresented: $confirmWipe, titleVisibility: .visible) {
+            .confirmationDialog("Delete everything WTF has?", isPresented: $confirmWipe, titleVisibility: .visible) {
                 Button("Delete Everything", role: .destructive) { Task { await model.deleteEverything() } }
+            } message: {
+                Text("Every conversation and recording, your lists (including what you added), the people and voices WTF knows, the things it knows, the words you\u{2019}ve corrected and Ask\u{2019}s history. This can\u{2019}t be undone.")
             }
         }
     }
@@ -224,7 +228,7 @@ struct PeopleView: View {
                 }
                 .swipeActions {
                     Button("Forget", systemImage: "trash", role: .destructive) {
-                        Task { await model.pipeline.forgetPerson(p.id) }
+                        model.forgetPerson(p)
                     }
                 }
             }

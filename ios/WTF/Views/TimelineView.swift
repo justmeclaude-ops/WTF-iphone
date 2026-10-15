@@ -161,7 +161,7 @@ struct TimelineEntry: View {
                             TopicNode(thread: item.thread, tangent: item.tangent)
                         }
                         if topics.count > 6 {
-                            Text("+ \(topics.count - 6) more").font(.caption).foregroundStyle(.tertiary).padding(.leading, 14)
+                            Text("+ \(topics.count - 6) more").font(.caption).foregroundStyle(.secondary).padding(.leading, 14)
                         }
                     }
                     .padding(.leading, 4)
@@ -207,7 +207,7 @@ struct TopicNode: View {
                 if let facts = thread.facts, !facts.isEmpty {
                     Text(facts).font(.caption).foregroundStyle(.secondary)
                 } else if thread.status == .hanging {
-                    Text("Left hanging").font(.caption).italic().foregroundStyle(.tertiary)
+                    Text("Left hanging").font(.caption).italic().foregroundStyle(.secondary)
                 }
             }
         }

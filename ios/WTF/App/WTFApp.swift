@@ -69,7 +69,7 @@ struct RootView: View {
         .sensoryFeedback(.selection, trigger: model.tab)
         .sheet(isPresented: $model.stopSheet) {
             StopListeningSheet()
-                .presentationDetents([.height(330)])
+                .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
     }
