@@ -8,6 +8,7 @@ struct TimelineView: View {
     @Query(sort: \Conversation.start, order: .reverse) private var conversations: [Conversation]
     @Query(filter: #Predicate<Chunk> { $0.status == "pending" }) private var pending: [Chunk]
     @State private var query = ""
+    @State private var deleting: Conversation?
 
     private var shown: [Conversation] {
         // Not ones being deleted: a row left showing one as it goes would crash the app.
@@ -65,10 +66,7 @@ struct TimelineView: View {
                                         }
                                     }
                                     ShareLink(item: shareText(c)) { Label("Share", systemImage: "square.and.arrow.up") }
-                                    Button("Delete", systemImage: "trash", role: .destructive) {
-                                        let id = c.id
-                                        Task { await model.deleteConversation(id) }
-                                    }
+                                    Button("Delete", systemImage: "trash", role: .destructive) { deleting = c }
                                 }
                         }
                     } header: {
@@ -88,6 +86,14 @@ struct TimelineView: View {
             .searchable(text: $query, prompt: "Search everything you've heard")
             .refreshable { await model.pipeline.run() }
             .navigationTitle("Timeline")
+            .confirmationDialog("Delete this conversation?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let id = deleting?.id { Task { await model.deleteConversation(id) } }
+                    deleting = nil
+                }
+            } message: {
+                Text("Its transcript, recording and suggestions go too. This can\u{2019}t be undone.")
+            }
             .navigationDestination(for: Conversation.self) { ConversationView(conversation: $0) }
             .navigationDestination(for: DayRef.self) { DayView(day: $0.day) }
             .toolbar { ToolbarItem(placement: .topBarLeading) { ListeningButton() } }

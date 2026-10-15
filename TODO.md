@@ -36,11 +36,11 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] **List suggestions silently dropped by a loose duplicate check** (half the words in common, any conversation, events ignore dates): "Dentist appointment" blocks "Doctor's appointment"; "Mum's birthday" blocks "Dad's birthday"; "Milk" blocks "Milk chocolate". Require near-identical titles and the same day for events. (WTFCore ActionRules.swift `similar`, Pipeline.swift `suggest`)
 - [x] **Lasting facts are deleted with their conversation on expiry** (default 7 days), contradicting Things WTF Knows. Detach facts (conversationID = nil) on expiry instead. (AppModel.swift `remove`)
 - [x] **"Forget" on a person deletes on the background context while People shows them**: the same pattern as the old Delete All crash. Delete on `mainContext`. (Pipeline.swift `forgetPerson`, SettingsView.swift)
-- [ ] **`expireOld` runs twice at launch** (task + becoming active), so the second deletes already-deleted objects. Serialise it and skip ids already hidden. (WTFApp.swift, AppModel.swift)
+- [x] **`expireOld` runs twice at launch** (task + becoming active), so the second deletes already-deleted objects. Serialise it and skip ids already hidden. (WTFApp.swift, AppModel.swift)
 - [x] **A deleted list item comes back as a suggestion** (duplicate check only sees items that still exist). Mark deleted items dismissed instead of deleting them. (ListsView.swift)
 - [ ] **Conversation memory merges different notes**: "ring the garage" + "ring the dentist" keeps only one; "Party at the Crown" + "Dinner at the Crown" keeps one. (WTFCore Understanding.swift `cleaned`)
 - [ ] A retried failed chunk is appended after newer lines (recap quotes old words as "the last thing said"), or becomes a stray overlapping conversation. (Pipeline.swift `attach`)
-- [ ] **Transcripts go into iCloud/computer backups** (only `audio/` is excluded) while the app says "nothing is uploaded" / "stays on this iPhone". Exclude Application Support from backups, or change the wording. (Recorder.swift, SettingsView.swift)
+- [x] **Transcripts go into iCloud/computer backups** (only `audio/` is excluded) while the app says "nothing is uploaded" / "stays on this iPhone". Exclude Application Support from backups, or change the wording. (Recorder.swift, SettingsView.swift)
 - [ ] Keep Transcripts only applies when the app comes forward; left listening in the background for days, old conversations stay. Run expiry periodically.
 - [ ] Lower: Pipeline.swift:89 reads `chunk.start/end` inside a `@Sendable` closure (copy first); writes to a chunk after an await it may have been deleted in; `compact` drops "(…earlier part left out…)" markers; topics crossing midnight aren't found by `lines(of:)`; facts/AI list items never extracted if killed after the summary; done/dismissed items never cleaned up.
 
@@ -50,13 +50,13 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] **Deleting any of the 12 most recent conversations (or its expiry) wipes recent answers**, because each answer is tagged with all 12. Tag only `focus` + `best`. (Pipeline.swift `notes`, AppModel.swift)
 - [x] **Rewordings miss the quick path**: "What were we talking about?", "Where were we?", "Remind me what I was saying", "What was the last thing I said?". (WTFCore Prompts.swift `latest`)
 - [ ] **General-question prompt isn't held to the 4k context** (12 titles + summaries unbudgeted; facts uncounted) → "Apple Intelligence couldn't answer that one". Budget the notes; retry smaller on context overflow. (WTFCore Prompts.swift `focused`, Understanding.swift `background`)
-- [ ] **No time limit on a streamed answer**: if it stalls, "Thinking…" stays and Ask is stuck until relaunch. Cancel after ~30 s with no new text. (AppModel.swift `answer`, Brain.swift `ask`)
+- [x] **No time limit on a streamed answer**: if it stalls, "Thinking…" stays and Ask is stuck until relaunch. Cancel after ~30 s with no new text. (AppModel.swift `answer`, Brain.swift `ask`)
 - [ ] **"Summarise my day so far" isn't a day summary** (generic prompt over the 12 latest from any day). Route to the Your Day recap. (AppModel.swift `ask`)
 - [ ] **Times aren't relative to now**: a recap of a conversation two days ago says "At 09:12 you were saying"; the latest/spoken prompts never say when the conversation was, so the AI says "you were just…" about yesterday. (WTFCore QuickRecap.swift `ago`, Prompts.swift)
 - [ ] Spoken fallback says "Then Speech cut in." and skips your newest words. (WTFCore QuickRecap.swift `spoken`)
 - [ ] **Follow-up buttons point at the wrong conversation** ("Summarise This" uses the latest, not the one asked about); "Add to Calendar" only switches tab; "Make a To-do List" only asks a question; they show under list answers and "not ready" messages too. (AskView.swift `FollowUps`)
 - [ ] **"Before that" window is used up by the reading** (a 15 s answer leaves ~5 s of the 20 s window); with nothing earlier, pressing again repeats the answer instead of "Nothing before that"; each step is logged as "WTF was I just on about?". (AppModel.swift `answerFromShortcut`, ReadAloud.swift)
-- [ ] Empty grey bubble when `tidy` strips everything ("Sure!"); raw framework error text in the error bubble; "Turn on listening…" shown while listening; Read My List gives only the weekday for far-off dates.
+- [x] Empty grey bubble when `tidy` strips everything ("Sure!"); raw framework error text in the error bubble; "Turn on listening…" shown while listening; Read My List gives only the weekday for far-off dates.
 - [ ] Unknown on device: whether the answer queues behind other AI work started by the flush, and whether Return in the multi-line field sends while busy (losing the question).
 
 ## Screens and UI
@@ -65,7 +65,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **"Delete All Recordings…" deletes far more** (hand-added to-dos, typed facts, corrected words, people, Ask history) and doesn't say it can't be undone. Rename to "Delete All Data…" and list it all. (SettingsView.swift)
 - [x] **Shortening Keep Transcripts silently deletes conversations** next time WTF opens. Add a footer (and a confirmation). (SettingsView.swift)
 - [ ] **Renaming a named speaker creates a second person** (only this conversation changes); People › Rename renames everywhere. "Rename You" for your own voice; invalid names silently ignored; the confirmation note is off-screen on long transcripts. (TimelineView.swift, Pipeline.swift `nameVoice`)
-- [ ] **Timeline long-press Delete has no confirmation** (the conversation page asks). (TimelineView.swift)
+- [x] **Timeline long-press Delete has no confirmation** (the conversation page asks). (TimelineView.swift)
 - [ ] **Conversations can't be renamed**, and a failed summary leaves "Summarising…" for ever. Add Rename; show "Conversation" after a failure. (TimelineView.swift `displayTitle`)
 - [x] "No Results / Check the spelling" shows when nobody's searching (first recording pending, or after deleting the last one). Use `searching && shown.isEmpty`. (TimelineView.swift)
 - [x] Lists' tick button has no accessibility label ("circle, button"). (ListsView.swift)
@@ -78,8 +78,8 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] Check on device: tab bar selection with `.tint(.primary)`; system alerts/editor taking a white tint (e.g. Add to Calendar's "Add"); VoiceOver on rows using hidden `opacity(0)` links; a stop sheet that can't present leaves `stopSheet` true.
 
 ## First run, permissions and settings
-- [ ] Notification permission is asked at first launch with no context; if denied, "WTF stopped listening" and answers when not listening silently disappear. Ask when listening first starts. (WTFApp.swift)
-- [ ] Names from Contacts / Use My Calendar stay on after access is revoked in iOS Settings. Re-check on open. (SettingsView.swift, PersonalWords.swift)
+- [x] Notification permission is asked at first launch with no context; if denied, "WTF stopped listening" and answers when not listening silently disappear. Ask when listening first starts. (WTFApp.swift)
+- [x] Names from Contacts / Use My Calendar stay on after access is revoked in iOS Settings. Re-check on open. (SettingsView.swift, PersonalWords.swift)
 - [ ] Voice models: "Download (22 MB)" is offered while the same download runs from the first Listen, and `VoiceEngine.prepare` can start a second concurrent download. Coalesce. (VoiceEngine.swift, SettingsView.swift)
 - [x] Diagnostics promises "no names" but the log records headphone names ("Sam's AirPods"). Log port types only. (ReadAloud.swift)
 - [ ] `SpeechTranscriber` availability is never checked; the App Store will offer the app to every iOS 26 iPhone. Explain when the device can't transcribe.

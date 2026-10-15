@@ -144,7 +144,12 @@ struct SettingsView: View {
                 default: DiagnosticsView()
                 }
             }
-            .task { speechReady = await SpeechEngine.shared.isReady() }
+            .task {
+                speechReady = await SpeechEngine.shared.isReady()
+                // Access taken away in iOS Settings: the switch says so.
+                if useContacts && !PersonalWords.contactsAllowed { useContacts = false }
+                if useCalendar && !PersonalWords.calendarAllowed { useCalendar = false }
+            }
             .confirmationDialog("Delete everything WTF has?", isPresented: $confirmWipe, titleVisibility: .visible) {
                 Button("Delete Everything", role: .destructive) { Task { await model.deleteEverything() } }
             } message: {

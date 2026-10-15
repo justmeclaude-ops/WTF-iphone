@@ -54,6 +54,11 @@ final class AppModel {
     private init() {
         container = try! ModelContainer(for: Chunk.self, Conversation.self, ActionItem.self, Person.self, Fact.self)
         pipeline = Pipeline(modelContainer: container)
+        // Everything WTF keeps stays on this iPhone: not in iCloud or computer backups either.
+        var support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? support.setResourceValues(values)
         let pipeline = pipeline
         Recorder.shared.onChunk = { url, start, end in
             Task { @MainActor in AppModel.shared.heardSomething(true) }
@@ -148,6 +153,8 @@ final class AppModel {
                 Task.detached(priority: .utility) { try? await VoiceEngine.shared.prepare() } // failures are logged inside
             }
             heardSomething(await pipeline.conversationCount() > 0)
+            // Now it's clear why: WTF says when it stops listening, and what it heard to act on.
+            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
             // The Lock Screen card first: iOS only lets an app start the microphone from the Lock
             // Screen or the Action button if its card is showing.
             ListeningActivity.shared.start()
@@ -281,6 +288,10 @@ final class AppModel {
 
     /// Conversations older than Settings › Keep Transcripts go, with what was asked about them.
     func expireOld() async {
+        // One at a time: at launch it's asked for twice, and both would delete the same ones.
+        guard !expiring else { return }
+        expiring = true
+        defer { expiring = false }
         let days = UserDefaults.standard.integer(forKey: "keepDays")
         let cutoff = Date().addingTimeInterval(-Double(days == 0 ? 7 : days) * 86_400)
         let old = (try? container.mainContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.end < cutoff }))) ?? []
@@ -288,6 +299,8 @@ final class AppModel {
         await remove(old, keepFacts: true)
         Log.info("\(old.count) conversation\(old.count == 1 ? "" : "s") past keeping went")
     }
+
+    @ObservationIgnored private var expiring = false
 
     /// Conversations that are being deleted, kept off the screens meanwhile.
     var hiding: Set<PersistentIdentifier> = []
@@ -594,19 +607,33 @@ final class AppModel {
 
     private func answer(_ prompt: String) async {
         status = "Thinking\u{2026}"
-        var text = ""
-        do {
-            for try await soFar in Brain.ask(prompt) {
-                text = Prompts.tidy(soFar)
-                streaming = text
+        // Written in a task of its own, given up on after a minute: Apple's AI can stall, and
+        // Ask would be stuck on "Thinking…" until WTF was closed.
+        let writing = Task { @MainActor () -> (text: String, error: Error?) in
+            var text = ""
+            do {
+                for try await soFar in Brain.ask(prompt) {
+                    text = Prompts.tidy(soFar)
+                    streaming = text
+                }
+                return (text, nil)
+            } catch {
+                return (text, error)
             }
-            streaming = nil
+        }
+        let limit = Task { try? await Task.sleep(for: .seconds(60)); writing.cancel() }
+        let (text, failure) = await writing.value
+        limit.cancel()
+        streaming = nil
+        if let failure { Log.error("Apple Intelligence couldn't answer", failure) }
+        if !text.isEmpty {
             add(ChatMessage(fromUser: false, text: text))
-        } catch {
-            Log.error("Apple Intelligence couldn't answer", error)
-            streaming = nil
-            if !text.isEmpty { add(ChatMessage(fromUser: false, text: text)) }
-            add(ChatMessage(fromUser: false, text: "Apple Intelligence couldn't answer that one (\(error.localizedDescription)).", isError: true))
+        } else if failure == nil && !writing.isCancelled {
+            add(ChatMessage(fromUser: false, text: "I couldn\u{2019}t find an answer to that in what I heard."))
+        }
+        if failure != nil || writing.isCancelled {
+            add(ChatMessage(fromUser: false, text: writing.isCancelled ? "Apple Intelligence took too long to answer. Try again in a moment."
+                                : "Apple Intelligence couldn\u{2019}t answer that one. Try asking another way.", isError: true))
         }
     }
 
