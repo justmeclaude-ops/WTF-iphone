@@ -43,6 +43,7 @@ struct WTFApp: App {
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @AppStorage("welcomed") private var welcomed = false
 
     var body: some View {
         if model.wiping {
@@ -68,6 +69,10 @@ struct RootView: View {
         // Black and white throughout; colour only where it means something (Settings, deleting).
         .tint(.primary)
         .sensoryFeedback(.selection, trigger: model.tab)
+        .sheet(isPresented: Binding(get: { !welcomed }, set: { if !$0 { welcomed = true } })) {
+            WelcomeSheet { welcomed = true }
+                .interactiveDismissDisabled()
+        }
         .sheet(isPresented: $model.stopSheet) {
             StopListeningSheet()
                 .presentationDetents([.medium])
@@ -172,5 +177,35 @@ struct ListeningButton: View {
         }
         .accessibilityHint(model.recording ? "Pauses listening" : "Starts listening")
         .sensoryFeedback(.impact(weight: .medium), trigger: model.recording)
+    }
+}
+
+/// The first time WTF opens: what it does with what it hears, before it's asked for the microphone.
+struct WelcomeSheet: View {
+    let done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text("Before WTF listens").font(.largeTitle.bold()).padding(.top, 36)
+            point("ear", "It listens for speech around you while it's on: yours and other people's. Silence and music aren't kept.")
+            point("iphone", "Everything's transcribed and summarised on this iPhone. Nothing is uploaded, and it isn't in your backups.")
+            point("clock.arrow.circlepath", "Conversations are deleted after the time you choose in Settings (a week to start with). Delete any of it, or all of it, whenever you like.")
+            point("person.2", "Let people know when WTF is listening, and follow the law where you are on recording others.")
+            Spacer()
+            Button(action: done) {
+                Text("Continue").font(.headline)
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .background(Capsule().fill(Color.primary))
+            }
+            .buttonStyle(.plain)
+            Link("Privacy Policy", destination: URL(string: "https://github.com/justmeclaude-ops/WTF-iphone/blob/main/PRIVACY.md")!)
+                .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 28).padding(.bottom, 20)
+    }
+
+    private func point(_ icon: String, _ text: String) -> some View {
+        Label { Text(text).foregroundStyle(.secondary) } icon: { Image(systemName: icon).foregroundStyle(.primary) }
     }
 }

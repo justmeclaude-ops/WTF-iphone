@@ -4,7 +4,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 
 ## App Store blockers
 - [x] **Privacy manifest missing**: no `PrivacyInfo.xcprivacy`, so App Store Connect rejects the upload (ITMS-91053). Add one to the app target: UserDefaults (CA92.1), file timestamps (C617.1), no tracking, no data collected.
-- [ ] **No privacy policy or recording explanation in the app** (guideline 5.1.1). Add a privacy policy link in Settings, and a first-run screen before the microphone prompt: what's recorded (including other people), how long it's kept, that it stays on the iPhone, how to stop and delete.
+- [x] **No privacy policy or recording explanation in the app** (guideline 5.1.1). Add a privacy policy link in Settings, and a first-run screen before the microphone prompt: what's recorded (including other people), how long it's kept, that it stays on the iPhone, how to stop and delete.
 - [ ] **Recording intents can finish with no Live Activity**: iOS's rules for recording intents don't allow this, and iOS 27 reportedly closes the app. Take `AudioRecordingIntent` off `WTFMenuIntent` (it reads answers aloud with the session active and no card). Don't start listening from a recording intent when Live Activities are off (explain how to turn them on). Re-request the card inside `perform` when already recording but the card has ended. (Intents.swift, ControlIntents.swift, ListeningActivity.swift)
 - [x] Add `ITSAppUsesNonExemptEncryption = false` to the Info.plist (project.yml).
 - [x] Remove `NSUserNotificationsUsageDescription` (not a real key; project.yml).
@@ -29,9 +29,9 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] Minor: `hasHeard` turns on for any kept recording before music is filtered out; `Recorder.running` read without the lock.
 
 ## Pipeline, data and deleting
-- [ ] **Summaries refuse sensitive talk**: `permissiveContentTransformations` only applies to `String` responses; `@Generable` summaries, list items, memory, topics, corrections and facts still throw `guardrailViolation`. The conversation shows "Summarising…" forever. Add a plain-text summary fallback (parse "Title:" + bullets). (Brain.swift)
-- [ ] **A failed summary is retried on every run, forever** (each new chunk re-runs up to 60 s of AI); with Apple Intelligence off, every unsummarised conversation is rescanned each chunk. Track attempts/last try, back off, give up with a fallback title, still run the later steps. (Pipeline.swift `think`/`summarise`, Models.swift)
-- [ ] **Deleting the conversation in progress brings its last words back**: the chunk being recorded and pending chunks become a new conversation. Cut off chunks recorded before the delete (like `wipedAt`) and clear LiveTranscriber's recent words. (AppModel.swift `remove`, Pipeline.swift `forget`, LiveTranscriber.swift)
+- [x] **Summaries refuse sensitive talk**: `permissiveContentTransformations` only applies to `String` responses; `@Generable` summaries, list items, memory, topics, corrections and facts still throw `guardrailViolation`. The conversation shows "Summarising…" forever. Add a plain-text summary fallback (parse "Title:" + bullets). (Brain.swift)
+- [x] **A failed summary is retried on every run, forever** (each new chunk re-runs up to 60 s of AI); with Apple Intelligence off, every unsummarised conversation is rescanned each chunk. Track attempts/last try, back off, give up with a fallback title, still run the later steps. (Pipeline.swift `think`/`summarise`, Models.swift)
+- [x] **Deleting the conversation in progress brings its last words back**: the chunk being recorded and pending chunks become a new conversation. Cut off chunks recorded before the delete (like `wipedAt`) and clear LiveTranscriber's recent words. (AppModel.swift `remove`, Pipeline.swift `forget`, LiveTranscriber.swift)
 - [x] **Action button can read out deleted content**: `Standby.refresh` sets `ready` after a ≤15 s AI call, undoing a `forget()` made meanwhile. Add a generation counter. (Standby.swift)
 - [ ] **List suggestions silently dropped by a loose duplicate check** (half the words in common, any conversation, events ignore dates): "Dentist appointment" blocks "Doctor's appointment"; "Mum's birthday" blocks "Dad's birthday"; "Milk" blocks "Milk chocolate". Require near-identical titles and the same day for events. (WTFCore ActionRules.swift `similar`, Pipeline.swift `suggest`)
 - [x] **Lasting facts are deleted with their conversation on expiry** (default 7 days), contradicting Things WTF Knows. Detach facts (conversationID = nil) on expiry instead. (AppModel.swift `remove`)
@@ -66,7 +66,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **Shortening Keep Transcripts silently deletes conversations** next time WTF opens. Add a footer (and a confirmation). (SettingsView.swift)
 - [ ] **Renaming a named speaker creates a second person** (only this conversation changes); People › Rename renames everywhere. "Rename You" for your own voice; invalid names silently ignored; the confirmation note is off-screen on long transcripts. (TimelineView.swift, Pipeline.swift `nameVoice`)
 - [x] **Timeline long-press Delete has no confirmation** (the conversation page asks). (TimelineView.swift)
-- [ ] **Conversations can't be renamed**, and a failed summary leaves "Summarising…" for ever. Add Rename; show "Conversation" after a failure. (TimelineView.swift `displayTitle`)
+- [x] **Conversations can't be renamed** (still to do), and a failed summary leaves "Summarising…" for ever. Add Rename; show "Conversation" after a failure. (TimelineView.swift `displayTitle`)
 - [x] "No Results / Check the spelling" shows when nobody's searching (first recording pending, or after deleting the last one). Use `searching && shown.isEmpty`. (TimelineView.swift)
 - [x] Lists' tick button has no accessibility label ("circle, button"). (ListsView.swift)
 - [x] Meaningful text in `.tertiary` (≈2:1 contrast): "Left hanging", "+ N more", "Writing it up…". Use `.secondary`. (TimelineView.swift, DayView.swift)

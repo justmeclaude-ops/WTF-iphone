@@ -317,6 +317,7 @@ final class AppModel {
         hiding.formUnion(keys)
         timelinePath = NavigationPath()
         try? await Task.sleep(for: .milliseconds(350))
+        if conversations.contains(where: { !$0.closed }) { await pipeline.cutOff() }
         for id in ids { await pipeline.forget(id) }
         for day in days { DayDigests.shared.forget(day: day) }
         for c in conversations { context.delete(c) }

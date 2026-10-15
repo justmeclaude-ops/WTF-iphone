@@ -121,6 +121,7 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink("Diagnostics", value: "diagnostics")
+                    Link("Privacy Policy", destination: URL(string: "https://github.com/justmeclaude-ops/WTF-iphone/blob/main/PRIVACY.md")!)
                 } footer: {
                     Text("If something's not working, share this so it can be fixed.")
                 }

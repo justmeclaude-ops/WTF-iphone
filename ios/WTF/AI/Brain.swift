@@ -108,6 +108,28 @@ enum Brain {
         return try await session.respond(to: Prompts.summary(transcript: transcript, background: background), generating: ConversationNotes.self).content
     }
 
+    /// The same in plain text, for when the structured notes are refused: the permissive
+    /// guardrails only apply to plain-text answers, so an argument, the news or a doctor's
+    /// appointment can still be summarised. "Title: …" then "- " points.
+    static func summariseText(_ transcript: String, background: String = "") async throws -> (title: String, points: [String])? {
+        let session = LanguageModelSession(model: model, instructions: "You write short, plain notes about conversations the user had today.")
+        let prompt = Prompts.summary(transcript: transcript, background: background)
+            + "\n\nReply with a first line \"Title: \" and a title of 2 to 6 words, then 2 to 5 short points, each on its own line starting with \"- \"."
+        let text = try await session.respond(to: prompt, options: steady).content
+        var title: String?
+        var points: [String] = []
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if title == nil, line.lowercased().hasPrefix("title:") {
+                title = Threads.clean(String(line.dropFirst(6)))
+            } else if line.hasPrefix("- ") || line.hasPrefix("\u{2022} ") || line.hasPrefix("* ") {
+                points.append(String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+        guard let title else { return nil }
+        return (title, points.filter { !$0.isEmpty })
+    }
+
     static func actions(lines: [String], start: Date, background: String = "") async throws -> FoundActions {
         let session = LanguageModelSession(model: model, instructions: "You pick out appointments, shopping and tasks from conversations. Only what was actually said.")
         return try await session.respond(to: Prompts.actions(lines: lines, conversationStart: start, background: background), generating: FoundActions.self).content

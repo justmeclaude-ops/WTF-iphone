@@ -21,6 +21,21 @@ actor Pipeline {
     /// Each with the words the recogniser doubted and the ones it was sure of, for fixing misheard words.
     private var toFollow: [(id: UUID, text: String, from: Date, to: Date, doubts: [Doubt], protected: Set<String>)] = []
 
+    /// Conversations whose summary failed, and how often (see summarise).
+    private var summaryFailures: [UUID: Int] = [:]
+
+    /// The conversation going on was deleted: what's still being recorded or waiting to be
+    /// transcribed would have joined it, so it goes too, rather than coming back as a new one.
+    func cutOff() {
+        wipedAt = Date()
+        toFollow = []
+        for chunk in (try? modelContext.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.status == "pending" }))) ?? [] {
+            if let path = chunk.path { try? FileManager.default.removeItem(atPath: path) }
+            modelContext.delete(chunk)
+        }
+        try? modelContext.save()
+    }
+
     /// Bumped by Delete Everything: work that was waiting on something checks it hasn't happened meanwhile.
     private var wiped = 0
     /// When everything was last deleted: a recording that started before then, finished after, goes too.
@@ -787,14 +802,27 @@ actor Pipeline {
         guard let c = conversation(id) else { return }
         let background = Prompts.background(memory: c.memory, facts: relevantFacts(to: c.memory.text() + " " + Prompts.tail(c.transcript, budget: 400), limit: 4))
         let transcript = c.transcript
-        guard let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript, background: background) }) }) else {
-            // Too long, or the model declined: the conversation's kept, untitled.
-            Log.error("Couldn't summarise a \(transcript.count)-character conversation")
+        var written: (title: String, points: [String])?
+        if let notes = await withDeadline(60, { await Log.attempt("Summary", { try await Brain.summarise(transcript, background: background) }) }) {
+            written = (notes.title, notes.points)
+        } else if let plain = await withDeadline(60, { await Log.attempt("Summary in plain text", { try await Brain.summariseText(transcript, background: background) }) }) {
+            written = plain // the structured notes were refused (a sensitive subject) or failed
+        }
+        guard let written else {
+            // Tried again on later runs, but not for ever: after three goes it's called just
+            // "Conversation", rather than "Summarising…" for good and an AI call on every recording.
+            summaryFailures[id, default: 0] += 1
+            Log.error("Couldn't summarise a \(transcript.count)-character conversation (try \(summaryFailures[id]!))")
+            if summaryFailures[id]! >= 3, let c = conversation(id) {
+                c.title = "Conversation"
+                c.summary = ""
+                try? modelContext.save()
+            }
             return
         }
         guard let c = conversation(id) else { return }
-        c.title = notes.title
-        c.summary = notes.points.map { "\u{2022} " + $0 }.joined(separator: "\n")
+        c.title = written.title
+        c.summary = written.points.map { "\u{2022} " + $0 }.joined(separator: "\n")
         try? modelContext.save()
         await learnFacts(from: id)
         guard let c = conversation(id) else { return }
