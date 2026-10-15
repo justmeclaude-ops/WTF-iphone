@@ -211,6 +211,21 @@ final class RecapAndRulesTests: XCTestCase {
         XCTAssertEqual(Prompts.intent("What were we talking about yesterday?"), .focused)
     }
 
+    func testDuplicatesAreNearlyTheSame() {
+        XCTAssertTrue(ActionRules.similar("Milk", "some milk"))
+        XCTAssertTrue(ActionRules.similar("Send Tom the link", "send the link to Tom"))
+        XCTAssertFalse(ActionRules.similar("Dentist appointment", "Doctor's appointment"))
+        XCTAssertFalse(ActionRules.similar("Milk", "Milk chocolate"))
+        XCTAssertFalse(ActionRules.similar("Mum's birthday", "Dad's birthday"))
+    }
+
+    func testOlderRecapsSayWhichDay() {
+        let cal = Calendar(identifier: .gregorian)
+        let now = Date(timeIntervalSince1970: 1_760_000_000)
+        XCTAssertTrue(QuickRecap.ago(now.addingTimeInterval(-86_400), now: now, calendar: cal).hasPrefix("yesterday at"))
+        XCTAssertTrue(QuickRecap.ago(now.addingTimeInterval(-3 * 86_400), now: now, calendar: cal).hasPrefix("on "))
+    }
+
     func testVadHearsSpeechOverQuiet() {
         var vad = EnergyVad()
         let quiet = [Float](repeating: 0.001, count: 480)

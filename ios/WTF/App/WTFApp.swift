@@ -63,7 +63,7 @@ struct RootView: View {
         return TabView(selection: $model.tab) {
             Tab("Ask", systemImage: "bubble.left.and.text.bubble.right", value: 0) { AskView().modifier(TabSwipe()) }
             Tab("Timeline", systemImage: "clock", value: 1) { TimelineView().modifier(TabSwipe()) }
-            Tab("Lists", systemImage: "checklist", value: 2) { ListsView().modifier(TabSwipe()) }
+            Tab("Lists", systemImage: "checklist", value: 2) { ListsView() } // no tab swipe: rows swipe to delete
             Tab("Settings", systemImage: "gear", value: 3) { SettingsView().modifier(TabSwipe()) }
         }
         // Black and white throughout; colour only where it means something (Settings, deleting).

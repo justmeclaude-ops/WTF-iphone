@@ -67,7 +67,7 @@ public enum QuickRecap {
         }
         if main.cutOff { out += "\u{2026}" }
         if !anonymous, i + 1 < turns.count {
-            let who = turns[i + 1].who == Labels.me ? "you" : turns[i + 1].who
+            let who = turns[i + 1].who == Labels.me ? "you" : name(turns[i + 1].who)
             out += main.cutOff ? " Then \(who) cut in." : " Then \(who) said something."
         }
         return out
@@ -116,7 +116,12 @@ public enum QuickRecap {
         case ..<3600: return "\(s / 60) minutes ago"
         default:
             let c = calendar.dateComponents([.hour, .minute], from: at)
-            return String(format: "at %02d:%02d", c.hour!, c.minute!)
+            let time = String(format: "at %02d:%02d", c.hour!, c.minute!)
+            // Not today: which day, so yesterday's isn't taken for just now.
+            if calendar.isDate(at, inSameDayAs: now) { return time }
+            if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(at, inSameDayAs: yesterday) { return "yesterday " + time }
+            let f = DateFormatter(); f.calendar = calendar; f.locale = Locale(identifier: "en_GB"); f.dateFormat = "EEEE d MMMM"
+            return "on \(f.string(from: at)) " + time
         }
     }
 

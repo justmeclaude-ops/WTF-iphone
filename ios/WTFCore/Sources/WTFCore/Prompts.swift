@@ -73,7 +73,7 @@ public enum Prompts {
     /// "What was I just on about?": only the last few minutes of the latest conversation.
     public static func latest(question: String, transcript: String, topic: String?, now: Date, background: String = "") -> String {
         """
-        \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first; the last line is the most recent:
+        \(background)The most recent conversation\(topic.map { " (topic: \($0))" } ?? ""), in order, oldest first, each line with the time it was said; the last line is the most recent:
         \(tail(TranscriptFormat.compact(transcript), budget: background.isEmpty ? 900 : 700))
 
         (It's \(clock(now)) now.) In 2 or 3 sentences, tell me what I was just talking about. If my last words trail off \

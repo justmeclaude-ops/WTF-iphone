@@ -340,10 +340,12 @@ public enum ActionRules {
     public static func overlap(_ a: String, _ b: String) -> Int { words(a).intersection(words(b)).count }
 
     /// Mostly the same words: "Milk" and "some milk", "Send Tom the link" and "send the link to Tom".
+    /// Not "Dentist appointment" and "Doctor's appointment", or "Milk" and "Milk chocolate": two
+    /// thirds of the longer one's words in common.
     public static func similar(_ a: String, _ b: String) -> Bool {
         let x = words(a), y = words(b)
         guard !x.isEmpty, !y.isEmpty else { return false }
-        return Double(x.intersection(y).count) / Double(min(x.count, y.count)) >= 0.5
+        return Double(x.intersection(y).count) / Double(max(x.count, y.count)) >= 0.67
     }
 
     /// The AI's findings plus the rules', de-duplicated (the AI's wording wins).
