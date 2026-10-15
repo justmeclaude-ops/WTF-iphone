@@ -153,7 +153,8 @@ struct TimelineEntry: View {
         HStack(alignment: .top, spacing: 0) {
             Text(conversation.start, format: .dateTime.hour().minute())
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                .frame(width: 58, alignment: .trailing)
+                .frame(minWidth: 58, alignment: .trailing)
+                .fixedSize()
                 .padding(.top, 14).padding(.trailing, 8)
             // The line, and this conversation's place on it.
             VStack(spacing: 0) {
@@ -412,7 +413,15 @@ struct ConversationView: View {
     private func name(_ label: String, as typed: String) {
         let id = conversation.id
         Task {
-            guard let done = await model.pipeline.nameVoice(in: id, label: label, as: typed) else { return }
+            if Labels.number(label) == nil, label != Labels.me, await model.pipeline.renamePerson(named: label, to: typed) {
+                saved += 1
+                note = "Renamed in every conversation."
+                return
+            }
+            guard let done = await model.pipeline.nameVoice(in: id, label: label, as: typed) else {
+                note = "That name can\u{2019}t be used: try a shorter one, without numbers."
+                return
+            }
             saved += 1
             let who = done.name == Labels.me ? "you" : done.name
             note = done.elsewhere > 0

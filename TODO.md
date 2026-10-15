@@ -57,7 +57,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **Follow-up buttons point at the wrong conversation** ("Summarise This" uses the latest, not the one asked about); "Add to Calendar" only switches tab; "Make a To-do List" only asks a question; they show under list answers and "not ready" messages too. (AskView.swift `FollowUps`)
 - [x] **"Before that" window is used up by the reading** (a 15 s answer leaves ~5 s of the 20 s window); with nothing earlier, pressing again repeats the answer instead of "Nothing before that"; each step is logged as "WTF was I just on about?". (AppModel.swift `answerFromShortcut`, ReadAloud.swift)
 - [x] Empty grey bubble when `tidy` strips everything ("Sure!"); raw framework error text in the error bubble; "Turn on listening…" shown while listening; Read My List gives only the weekday for far-off dates.
-- [ ] Unknown on device: whether the answer queues behind other AI work started by the flush, and whether Return in the multi-line field sends while busy (losing the question).
+- [x] Unknown on device: whether the answer queues behind other AI work started by the flush, and whether Return in the multi-line field sends while busy (losing the question).
 
 ## Screens and UI
 - [x] **Fix Words "Save" is likely white on white in dark mode** (`.confirmationAction` drawn filled with the white tint). Use a plain trailing button. (TimelineView.swift `FixWordsSheet`)
@@ -72,7 +72,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] Meaningful text in `.tertiary` (≈2:1 contrast): "Left hanging", "+ N more", "Writing it up…". Use `.secondary`. (TimelineView.swift, DayView.swift)
 - [x] Stop sheet is a fixed 330 pt high; large text clips it. Use `.medium`. (WTFApp.swift)
 - [x] Your Day can read "One conversation, at 10:42: Listening…." (placeholder titles in the plain recap). (DayView.swift, WTFCore Day.swift)
-- [ ] Time column (58 pt) wraps "10:42 AM" at large text; transcript times always 24-hour. (TimelineView.swift)
+- [x] Time column (58 pt) wraps "10:42 AM" at large text; transcript times always 24-hour. (TimelineView.swift)
 - [ ] Raw system errors shown to users (AppModel.swift, SettingsView.swift).
 - [x] Wording: "Threads" vs "topics"; "Not Now" dismisses permanently; "3 segments waiting / Process Now" is jargon; "New after 5 min of silence" doesn't say what's new; "Heard today…" while older suggestions stay; empty states say "Turn on listening" while listening; Your Day "To Do" vs Lists "To-dos".
 - [ ] Check on device: tab bar selection with `.tint(.primary)`; system alerts/editor taking a white tint (e.g. Add to Calendar's "Add"); VoiceOver on rows using hidden `opacity(0)` links; a stop sheet that can't present leaves `stopSheet` true.

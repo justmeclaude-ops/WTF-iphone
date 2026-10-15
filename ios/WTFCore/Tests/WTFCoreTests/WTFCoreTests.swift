@@ -239,5 +239,8 @@ final class RecapAndRulesTests: XCTestCase {
         let items = [ListAnswers.Item(type: .buy, title: "Milk"), ListAnswers.Item(type: .todo, title: "Ring the landlord")]
         XCTAssertEqual(ListAnswers.answer("What do I need to buy?", open: items), "To buy:\n\u{2022} Milk")
         XCTAssertNil(ListAnswers.answer("What was I saying about shopping?", open: items))
+        XCTAssertNil(ListAnswers.answer("What did I promise Tom?", open: items))
+        XCTAssertNil(ListAnswers.answer("What happened in the team meeting?", open: items))
+        XCTAssertEqual(ListAnswers.answer("What's on my to-do list?", open: items), "Still to do:\n\u{2022} Ring the landlord")
     }
 }

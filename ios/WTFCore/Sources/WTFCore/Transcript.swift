@@ -69,12 +69,12 @@ public enum ListAnswers {
     public static func answer(_ question: String, open: [Item], now: Date = Date()) -> String? {
         let q = question.lowercased()
         // Only clear list questions; anything about the past goes to the AI.
-        if Rx(#"\b(was|were|said|saying|earlier|yesterday)\b"#).test(q) { return nil }
+        if Rx(#"\b(was|were|said|saying|earlier|yesterday|did|tell|told|decide|decided|happen|happened|who|why|talk|talked|discuss|discussed)\b"#).test(q) { return nil }
         func list(_ items: [Item], _ empty: String, _ header: String) -> String {
             items.isEmpty ? empty : header + "\n" + items.map { "\u{2022} \($0.title)" }.joined(separator: "\n")
         }
         if shopping.test(q) { return list(open.filter { $0.type == .buy }, "Nothing to buy on your list.", "To buy:") }
-        if todos.test(q) { return list(open, "Nothing on your to-do list.", "Still to do:") }
+        if todos.test(q) { return list(open.filter { $0.type == .todo }, "Nothing on your to-do list.", "Still to do:") }
         if events.test(q) {
             let upcoming = open.filter { $0.type == .event && ($0.start ?? .distantFuture) >= now.addingTimeInterval(-3600) }
                 .sorted { ($0.start ?? .distantFuture) < ($1.start ?? .distantFuture) }

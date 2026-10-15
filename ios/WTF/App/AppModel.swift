@@ -561,7 +561,7 @@ final class AppModel {
             .sorted { ($0.start ?? .distantFuture) < ($1.start ?? .distantFuture) }.prefix(3)
         if !events.isEmpty {
             parts.append("Coming up: " + events.map { e in
-                e.title + (e.start.map { " " + ($0.formatted(.dateTime.weekday(.wide)) + (e.allDay ? "" : " at " + $0.formatted(date: .omitted, time: .shortened))) } ?? "")
+                e.title + (e.start.map { " " + (($0.timeIntervalSinceNow < 6 * 86_400 ? $0.formatted(.dateTime.weekday(.wide)) : $0.formatted(.dateTime.weekday(.wide).day().month(.wide))) + (e.allDay ? "" : " at " + $0.formatted(date: .omitted, time: .shortened))) } ?? "")
             }.joined(separator: ", ") + ".")
         }
         let todos = open.filter { $0.type == .todo }.prefix(5).map(\.title)

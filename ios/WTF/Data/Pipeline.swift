@@ -624,6 +624,14 @@ actor Pipeline {
         try? modelContext.save()
     }
 
+    /// Renaming someone already named in a transcript: the person, everywhere (not a second
+    /// person with the same voice). False if no one's called that.
+    func renamePerson(named old: String, to typed: String) -> Bool {
+        guard let p = ((try? modelContext.fetch(FetchDescriptor<Person>())) ?? []).first(where: { !$0.isMe && $0.name == old }) else { return false }
+        renamePerson(p.id, to: typed)
+        return true
+    }
+
     /// Stops recognising someone. Transcripts keep the name they were given.
     func forgetPerson(_ id: UUID) {
         try? modelContext.delete(model: Person.self, where: #Predicate { $0.id == id })
