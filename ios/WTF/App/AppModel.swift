@@ -65,7 +65,14 @@ final class AppModel {
         try? support.setResourceValues(values)
         let pipeline = pipeline
         Recorder.shared.onChunk = { url, start, end in
-            Task { @MainActor in AppModel.shared.heardSomething(true) }
+            Task { @MainActor in
+                AppModel.shared.heardSomething(true)
+                // Keep Transcripts applies while WTF listens in the background too, not only on opening.
+                if Date().timeIntervalSince(AppModel.shared.lastExpiry) > 3600 {
+                    AppModel.shared.lastExpiry = Date()
+                    await AppModel.shared.expireOld()
+                }
+            }
             Task {
                 await pipeline.addChunk(url: url, start: start, end: end)
                 await pipeline.run()
@@ -168,7 +175,14 @@ final class AppModel {
             ListeningActivity.shared.start()
             await LiveTranscriber.shared.start()
             microphone = true
+            let stopsBefore = stops
             try await switchMicrophoneOn()
+            if stops != stopsBefore {
+                // Stopped while it was starting: stays stopped.
+                Recorder.shared.stop()
+                ListeningActivity.shared.stop()
+                return false
+            }
             recording = true
             listeningSince = Date()
             problem = nil
@@ -179,7 +193,7 @@ final class AppModel {
             ListeningActivity.shared.stop()
             await LiveTranscriber.shared.stop()
             if !microphone {
-                problem = "Couldn't start listening: \(error.localizedDescription)"
+                problem = "Couldn\u{2019}t get speech recognition ready. Check Wi-Fi and free space, then try again."
             } else if UIApplication.shared.applicationState != .background {
                 problem = "Couldn\u{2019}t switch the microphone on: \(Self.why(error)). Try again in a moment."
             } else {
@@ -315,6 +329,7 @@ final class AppModel {
     }
 
     @ObservationIgnored private var expiring = false
+    @ObservationIgnored var lastExpiry = Date()
 
     /// Conversations that are being deleted, kept off the screens meanwhile.
     var hiding: Set<PersistentIdentifier> = []
@@ -349,6 +364,8 @@ final class AppModel {
         }
         try? context.save()
         forgetAsked(about: Set(ids))
+        backstory = []
+        if recording { ListeningActivity.shared.show(await pipeline.latestThreads()) }
         heardSomething(((try? context.fetchCount(FetchDescriptor<Conversation>())) ?? 0) > 0)
         try? await Task.sleep(for: .milliseconds(500))
         hiding.subtract(keys)
@@ -409,6 +426,16 @@ final class AppModel {
             }
             let intent = Prompts.intent(q)
             let now = Date()
+            if focus == nil, intent == .digest, Brain.notReadyReason == nil, q.lowercased().contains("day") {
+                let today = Calendar.current.startOfDay(for: now)
+                let all = (try? container.mainContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.start >= today }, sortBy: [SortDescriptor(\.start)]))) ?? []
+                let notes = all.filter { $0.title != nil && $0.title != "" }.map(\.dayNote)
+                if !notes.isEmpty, let recap = await DayDigests.shared.recap(for: today, notes: notes) {
+                    about.formUnion(all.map(\.id))
+                    add(ChatMessage(fromUser: false, text: recap))
+                    return
+                }
+            }
             let latest = await pipeline.latestConversation()
             if focus == nil, intent == .latest {
                 guard let latest else {

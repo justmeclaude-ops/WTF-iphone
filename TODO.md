@@ -19,13 +19,13 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **WTF records its own voice**: read-aloud voice samples in Settings play through the speaker while listening and get transcribed (e.g. a "Dentist, Thursday" suggestion). Car kits count as headphones. Ignore recorded audio while ReadAloud is playing. (ReadAloud.swift, Recorder.swift, VoicePicker.swift)
 - [x] **Control Center "WTF Listening" fails silently**: it tries the mic from the background and discards the result. Report the result (notification), or bring WTF forward. (ControlIntents.swift)
 - [x] **"Stop WTF" / Stop Listening doesn't stick if `recording` is already false**: always clear the saved `listening` flag, end every card and cancel the "paused" notification. (Intents.swift `StopListeningIntent`)
-- [ ] **A deleted conversation's topics (and any answer) stay on the Lock Screen card**, and the cached "before that" backstory too. Refresh the card from `latestThreads()` after deletes. (AppModel.swift `remove`)
+- [x] **A deleted conversation's topics (and any answer) stay on the Lock Screen card**, and the cached "before that" backstory too. Refresh the card from `latestThreads()` after deletes. (AppModel.swift `remove`)
 - [x] `setListening(false)` doesn't cancel the 3-minute "WTF has paused listening" notification. (AppModel.swift)
 - [x] **No "starting" state, and start failures only show on Ask.** Listen on Timeline/Lists and the Settings toggle fail silently (the toggle snaps back), and the first start includes the speech model download with no progress or time limit. Add a busy state, an alert with the reason, "Open Settings" when the mic is denied, and a deadline on the download. (AppModel.swift, WTFApp.swift, SettingsView.swift, SpeechEngine.swift)
 - [ ] **Pill and card exceed the 160 pt height limit** (≈169–185 pt with trail + 3 buttons), so buttons get clipped. Drop the trail in the pill, smaller circles (≈40/50), less padding; with an answer showing hide the topic. The 3-line answer cuts spoken recaps; allow ~4 smaller lines. (WTFWidgets.swift)
 - [x] Pill shows "● Recording" and "Listening" at once: show only the topic in the centre.
-- [ ] `stopSpeaking` during `ReadAloud.prepare()` caches a cut-off answer that later presses replay. (ReadAloud.swift)
-- [ ] Tapping the pill after WTF was killed: `wtf://listening` is ignored because `recording` is false, then listening restarts with no stop sheet. Also: a stop pressed while a start is in flight is overridden when the start finishes. (WTFApp.swift, AppModel.swift)
+- [x] `stopSpeaking` during `ReadAloud.prepare()` caches a cut-off answer that later presses replay. (ReadAloud.swift)
+- [ ] Tapping the pill after WTF was killed: `wtf://listening` is ignored because `recording` is false, then listening restarts with no stop sheet. (Fixed: a stop pressed while a start is in flight is no longer overridden.) when the start finishes. (WTFApp.swift, AppModel.swift)
 - [ ] Minor: `hasHeard` turns on for any kept recording before music is filtered out; `Recorder.running` read without the lock.
 
 ## Pipeline, data and deleting
@@ -41,7 +41,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **Conversation memory merges different notes**: "ring the garage" + "ring the dentist" keeps only one; "Party at the Crown" + "Dinner at the Crown" keeps one. (WTFCore Understanding.swift `cleaned`)
 - [ ] A retried failed chunk is appended after newer lines (recap quotes old words as "the last thing said"), or becomes a stray overlapping conversation. (Pipeline.swift `attach`)
 - [x] **Transcripts go into iCloud/computer backups** (only `audio/` is excluded) while the app says "nothing is uploaded" / "stays on this iPhone". Exclude Application Support from backups, or change the wording. (Recorder.swift, SettingsView.swift)
-- [ ] Keep Transcripts only applies when the app comes forward; left listening in the background for days, old conversations stay. Run expiry periodically.
+- [x] Keep Transcripts only applies when the app comes forward; left listening in the background for days, old conversations stay. Run expiry periodically.
 - [ ] Lower: Pipeline.swift:89 reads `chunk.start/end` inside a `@Sendable` closure (copy first); writes to a chunk after an await it may have been deleted in; `compact` drops "(…earlier part left out…)" markers; topics crossing midnight aren't found by `lines(of:)`; facts/AI list items never extracted if killed after the summary; done/dismissed items never cleaned up.
 
 ## Ask and answers
@@ -51,7 +51,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] **Rewordings miss the quick path**: "What were we talking about?", "Where were we?", "Remind me what I was saying", "What was the last thing I said?". (WTFCore Prompts.swift `latest`)
 - [ ] **General-question prompt isn't held to the 4k context** (12 titles + summaries unbudgeted; facts uncounted) → "Apple Intelligence couldn't answer that one". Budget the notes; retry smaller on context overflow. (WTFCore Prompts.swift `focused`, Understanding.swift `background`)
 - [x] **No time limit on a streamed answer**: if it stalls, "Thinking…" stays and Ask is stuck until relaunch. Cancel after ~30 s with no new text. (AppModel.swift `answer`, Brain.swift `ask`)
-- [ ] **"Summarise my day so far" isn't a day summary** (generic prompt over the 12 latest from any day). Route to the Your Day recap. (AppModel.swift `ask`)
+- [x] **"Summarise my day so far" isn't a day summary** (generic prompt over the 12 latest from any day). Route to the Your Day recap. (AppModel.swift `ask`)
 - [x] **Times aren't relative to now**: a recap of a conversation two days ago says "At 09:12 you were saying"; the latest/spoken prompts never say when the conversation was, so the AI says "you were just…" about yesterday. (WTFCore QuickRecap.swift `ago`, Prompts.swift)
 - [x] Spoken fallback says "Then Speech cut in." and skips your newest words. (WTFCore QuickRecap.swift `spoken`)
 - [x] **Follow-up buttons point at the wrong conversation** ("Summarise This" uses the latest, not the one asked about); "Add to Calendar" only switches tab; "Make a To-do List" only asks a question; they show under list answers and "not ready" messages too. (AskView.swift `FollowUps`)
@@ -73,14 +73,14 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [x] Stop sheet is a fixed 330 pt high; large text clips it. Use `.medium`. (WTFApp.swift)
 - [x] Your Day can read "One conversation, at 10:42: Listening…." (placeholder titles in the plain recap). (DayView.swift, WTFCore Day.swift)
 - [x] Time column (58 pt) wraps "10:42 AM" at large text; transcript times always 24-hour. (TimelineView.swift)
-- [ ] Raw system errors shown to users (AppModel.swift, SettingsView.swift).
+- [x] Raw system errors shown to users (AppModel.swift, SettingsView.swift).
 - [x] Wording: "Threads" vs "topics"; "Not Now" dismisses permanently; "3 segments waiting / Process Now" is jargon; "New after 5 min of silence" doesn't say what's new; "Heard today…" while older suggestions stay; empty states say "Turn on listening" while listening; Your Day "To Do" vs Lists "To-dos".
 - [ ] Check on device: tab bar selection with `.tint(.primary)`; system alerts/editor taking a white tint (e.g. Add to Calendar's "Add"); VoiceOver on rows using hidden `opacity(0)` links; a stop sheet that can't present leaves `stopSheet` true.
 
 ## First run, permissions and settings
 - [x] Notification permission is asked at first launch with no context; if denied, "WTF stopped listening" and answers when not listening silently disappear. Ask when listening first starts. (WTFApp.swift)
 - [x] Names from Contacts / Use My Calendar stay on after access is revoked in iOS Settings. Re-check on open. (SettingsView.swift, PersonalWords.swift)
-- [ ] Voice models: "Download (22 MB)" is offered while the same download runs from the first Listen, and `VoiceEngine.prepare` can start a second concurrent download. Coalesce. (VoiceEngine.swift, SettingsView.swift)
+- [x] Voice models: "Download (22 MB)" is offered while the same download runs from the first Listen, and `VoiceEngine.prepare` can start a second concurrent download. Coalesce. (VoiceEngine.swift, SettingsView.swift)
 - [x] Diagnostics promises "no names" but the log records headphone names ("Sam's AirPods"). Log port types only. (ReadAloud.swift)
 - [ ] `SpeechTranscriber` availability is never checked; the App Store will offer the app to every iOS 26 iPhone. Explain when the device can't transcribe.
 - [ ] Design call: recap and list intents use `.alwaysAllowed`, so they read conversation content on a locked phone (and the card shows topics/answers). Consider a setting.

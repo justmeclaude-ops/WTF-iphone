@@ -196,7 +196,7 @@ struct SettingsView: View {
                 try await SpeechEngine.shared.prepare()
             } catch {
                 Log.error("Speech model download", error)
-                speechProblem = "The download failed: \(error.localizedDescription) Check Wi-Fi and free space, then try again."
+                speechProblem = "The download didn\u{2019}t finish. Check Wi-Fi and free space, then try again."
             }
             speechReady = await SpeechEngine.shared.isReady()
             if speechReady == false && speechProblem == nil {

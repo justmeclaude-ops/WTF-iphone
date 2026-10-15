@@ -55,8 +55,10 @@ final class ReadAloud: NSObject {
     func prepare(_ text: String) async {
         let key = Self.key(text, Self.voice, Self.speed)
         guard prepared?.key != key else { return }
+        let before = reading
         let sound = await render(utterance(text, voice: Self.voice, speed: Self.speed))
-        if !sound.isEmpty { prepared = (key, sound) }
+        // A reading started meanwhile stops the synthesiser: what came back may be cut short.
+        if !sound.isEmpty, before == reading { prepared = (key, sound) }
     }
 
     /// Settings › Read-Aloud Voice: a short sample in [voice] at [speed].

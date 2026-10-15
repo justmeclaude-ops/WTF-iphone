@@ -16,12 +16,18 @@ actor VoiceEngine {
     static var downloaded: Bool { UserDefaults.standard.bool(forKey: "voicesDownloaded") }
 
     private var manager: OfflineDiarizerManager?
+    private var loading: Task<Void, Error>?
 
     /// Downloads the models the first time, then loads them (once).
     func prepare() async throws {
         guard manager == nil else { return }
+        // One download at a time: a second ask (Settings, while the first Listen's is going) waits for it.
+        if let loading { return try await loading.value }
         let m = OfflineDiarizerManager(config: .default)
-        do { try await m.prepareModels() } catch {
+        let job = Task { try await m.prepareModels() }
+        loading = job
+        defer { loading = nil }
+        do { try await job.value } catch {
             Log.error("Voice models didn't load", error)
             throw error
         }
