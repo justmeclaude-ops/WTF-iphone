@@ -11,6 +11,8 @@ final class Standby {
     private var working = false
     private var last = Date.distantPast
     private var queued = false
+    /// Bumped by forget(): an answer worked out across a delete may be about what was deleted.
+    private var generation = 0
 
     /// New speech has been transcribed: work the answer out again, now or in a little while.
     func refresh() async {
@@ -29,7 +31,8 @@ final class Standby {
         working = true
         last = Date()
         defer { working = false }
-        guard let made = await AppModel.shared.workOutRecap(live: "", ai: 15) else { return }
+        let before = generation
+        guard let made = await AppModel.shared.workOutRecap(live: "", ai: 15), before == generation else { return }
         ready = made
         await ReadAloud.shared.prepare(made.text)
     }
@@ -37,6 +40,7 @@ final class Standby {
     /// Something was deleted: the answer kept ready (and its sound) may be about it.
     func forget() {
         ready = nil
+        generation += 1
         ReadAloud.shared.forget()
     }
 

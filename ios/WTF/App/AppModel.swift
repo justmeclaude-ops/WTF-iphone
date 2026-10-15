@@ -99,10 +99,16 @@ final class AppModel {
             recording = false
             ListeningActivity.shared.stop()
             UserDefaults.standard.set(false, forKey: "listening")
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [AppModel.pausedNotice])
+            stops += 1
+            let stop = stops
             // The last recording's words are taken from the live transcript before it stops.
             // Pausing ends the conversation: it gets its title and summary now, not in five minutes.
+            // Unless listening's started again meanwhile: then the live transcriber and the
+            // conversation belong to the new session and are left alone.
             Task {
-                await pipeline.run()
+                await pipeline.catchUp()
+                guard stop == stops, !recording, starting == nil else { return }
                 await LiveTranscriber.shared.stop()
                 await pipeline.closeLatest()
                 await pipeline.run()
@@ -124,6 +130,8 @@ final class AppModel {
     }
 
     @ObservationIgnored private var starting: Task<Bool, Never>?
+    /// Counts stops, so a stop's tidying up doesn't run into a listening session started since.
+    @ObservationIgnored private var stops = 0
 
     private func startListeningNow() async -> Bool {
         if recording && Recorder.shared.running { return true }
@@ -277,7 +285,7 @@ final class AppModel {
         let cutoff = Date().addingTimeInterval(-Double(days == 0 ? 7 : days) * 86_400)
         let old = (try? container.mainContext.fetch(FetchDescriptor<Conversation>(predicate: #Predicate { $0.end < cutoff }))) ?? []
         guard !old.isEmpty else { return }
-        await remove(old)
+        await remove(old, keepFacts: true)
         Log.info("\(old.count) conversation\(old.count == 1 ? "" : "s") past keeping went")
     }
 
@@ -287,7 +295,7 @@ final class AppModel {
     /// Deletes [conversations] with their suggestions, facts and recordings, and what Ask said
     /// about them. Safely: off the screens first (and off any page showing one), the pipeline lets
     /// go of them, then they're deleted where the screens' copies are, so none is left pointing at one.
-    private func remove(_ conversations: [Conversation]) async {
+    private func remove(_ conversations: [Conversation], keepFacts: Bool = false) async {
         guard !conversations.isEmpty else { return }
         let context = container.mainContext
         let keys = conversations.map(\.persistentModelID)
@@ -305,7 +313,7 @@ final class AppModel {
                 context.delete(item)
             }
             for fact in (try? context.fetch(FetchDescriptor<Fact>(predicate: #Predicate { $0.conversationID == cid }))) ?? [] {
-                context.delete(fact)
+                if keepFacts { fact.conversationID = nil } else { context.delete(fact) }
             }
             for chunk in (try? context.fetch(FetchDescriptor<Chunk>(predicate: #Predicate { $0.conversationID == cid }))) ?? [] {
                 context.delete(chunk)
@@ -367,7 +375,7 @@ final class AppModel {
                 add(ChatMessage(fromUser: false, text: "The last few seconds are still being transcribed, so this may miss them."))
             }
             // Questions about the list are answered straight from it.
-            if let direct = ListAnswers.answer(q, open: openItems()) {
+            if focus == nil, let direct = ListAnswers.answer(q, open: openItems()) {
                 add(ChatMessage(fromUser: false, text: direct))
                 return
             }

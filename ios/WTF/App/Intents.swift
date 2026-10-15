@@ -73,7 +73,7 @@ struct StopListeningIntent: AudioRecordingIntent, LiveActivityIntent {
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         AppModel.shared.buttonPressedAt = Date()
-        if AppModel.shared.recording { AppModel.shared.setListening(false) }
+        AppModel.shared.setListening(false) // even if WTF thinks it isn't: the setting and any card go too
         return .result(dialog: "WTF has stopped listening.")
     }
 }
@@ -107,7 +107,7 @@ enum WTFChoice: String, AppEnum {
 
 /// A menu: for the Action button (or Back Tap) if you'd rather choose each time than have one
 /// press do the most likely thing. Set a choice when assigning it and it does that straight away.
-struct WTFMenuIntent: AudioPlaybackIntent, AudioRecordingIntent, LiveActivityIntent {
+struct WTFMenuIntent: AudioPlaybackIntent, LiveActivityIntent {
     static let title: LocalizedStringResource = "WTF Menu"
     static let description = IntentDescription("Choose: what you were saying, what came before, listening on or off, or your list.")
     static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]

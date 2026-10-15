@@ -3,27 +3,27 @@
 Findings from a full review of build 35 (five reviewers: listening, pipeline, Ask, screens, first run / App Store), checked against the code. Ordered roughly by severity within each group. Paths are under `ios/`.
 
 ## App Store blockers
-- [ ] **Privacy manifest missing**: no `PrivacyInfo.xcprivacy`, so App Store Connect rejects the upload (ITMS-91053). Add one to the app target: UserDefaults (CA92.1), file timestamps (C617.1), no tracking, no data collected.
+- [x] **Privacy manifest missing**: no `PrivacyInfo.xcprivacy`, so App Store Connect rejects the upload (ITMS-91053). Add one to the app target: UserDefaults (CA92.1), file timestamps (C617.1), no tracking, no data collected.
 - [ ] **No privacy policy or recording explanation in the app** (guideline 5.1.1). Add a privacy policy link in Settings, and a first-run screen before the microphone prompt: what's recorded (including other people), how long it's kept, that it stays on the iPhone, how to stop and delete.
 - [ ] **Recording intents can finish with no Live Activity**: iOS's rules for recording intents don't allow this, and iOS 27 reportedly closes the app. Take `AudioRecordingIntent` off `WTFMenuIntent` (it reads answers aloud with the session active and no card). Don't start listening from a recording intent when Live Activities are off (explain how to turn them on). Re-request the card inside `perform` when already recording but the card has ended. (Intents.swift, ControlIntents.swift, ListeningActivity.swift)
-- [ ] Add `ITSAppUsesNonExemptEncryption = false` to the Info.plist (project.yml).
-- [ ] Remove `NSUserNotificationsUsageDescription` (not a real key; project.yml).
+- [x] Add `ITSAppUsesNonExemptEncryption = false` to the Info.plist (project.yml).
+- [x] Remove `NSUserNotificationsUsageDescription` (not a real key; project.yml).
 - [ ] Before submission: code signing is off in project.yml and CI has no archive/upload step. Decide whether the name "WTF" passes review / affects the age rating.
 
 ## Listening, pill and Lock Screen card
-- [ ] **"Recording" pill stays after WTF is closed or crashes, and its Stop button can turn listening ON** (Stop is the toggle intent). Add a stop-only intent for the card/pill Stop. End stray cards at launch when not recording. Refresh a `staleDate` while recording and show "Not recording" when stale. (ListeningActivity.swift, ControlIntents.swift, WTFWidgets.swift)
-- [ ] **Audio engine released inside its own configuration-change handler** (new in build 35): Apple warns this can deadlock. Likely when AirPods go in or out. Move the restart off the notification thread and keep the old engine alive until later. (Recorder.swift `freshEngine`)
-- [ ] **A stop followed quickly by a start kills live transcription for the new session and splits its conversation.** The stop's tail (`pipeline.run()` → `LiveTranscriber.stop()` → `closeLatest()`) runs after the new start. Delete All (stop + start 0.6 s apart) nearly always hits it. Use a listening generation counter, and `catchUp()` instead of `run()`. (AppModel.swift `setListening`)
+- [x] **"Recording" pill stays after WTF is closed or crashes, and its Stop button can turn listening ON** (Stop is the toggle intent). Add a stop-only intent for the card/pill Stop. End stray cards at launch when not recording. Refresh a `staleDate` while recording and show "Not recording" when stale. (ListeningActivity.swift, ControlIntents.swift, WTFWidgets.swift)
+- [x] **Audio engine released inside its own configuration-change handler** (new in build 35): Apple warns this can deadlock. Likely when AirPods go in or out. Move the restart off the notification thread and keep the old engine alive until later. (Recorder.swift `freshEngine`)
+- [x] **A stop followed quickly by a start kills live transcription for the new session and splits its conversation.** The stop's tail (`pipeline.run()` → `LiveTranscriber.stop()` → `closeLatest()`) runs after the new start. Delete All (stop + start 0.6 s apart) nearly always hits it. Use a listening generation counter, and `catchUp()` instead of `run()`. (AppModel.swift `setListening`)
 - [ ] **One failed restart ends listening for good**: e.g. opening WTF during a call ('!pri') shows "WTF stopped listening" and it never resumes. Keep running/stalled on interruption-type errors and retry with back-off. (Recorder.swift `restart`, AppModel.swift `resumeIfNeeded`)
 - [ ] **After iOS ends the card (~8 h) or it's swiped away, answers from the buttons vanish**: `showing` is only `activity != nil`. Check `activityState == .active`, restart the card when WTF comes forward or inside the intents, and keep `since` = `listeningSince` so the timer doesn't reset. (ListeningActivity.swift)
 - [ ] **WTF records its own voice**: read-aloud voice samples in Settings play through the speaker while listening and get transcribed (e.g. a "Dentist, Thursday" suggestion). Car kits count as headphones. Ignore recorded audio while ReadAloud is playing. (ReadAloud.swift, Recorder.swift, VoicePicker.swift)
 - [ ] **Control Center "WTF Listening" fails silently**: it tries the mic from the background and discards the result. Report the result (notification), or bring WTF forward. (ControlIntents.swift)
-- [ ] **"Stop WTF" / Stop Listening doesn't stick if `recording` is already false**: always clear the saved `listening` flag, end every card and cancel the "paused" notification. (Intents.swift `StopListeningIntent`)
+- [x] **"Stop WTF" / Stop Listening doesn't stick if `recording` is already false**: always clear the saved `listening` flag, end every card and cancel the "paused" notification. (Intents.swift `StopListeningIntent`)
 - [ ] **A deleted conversation's topics (and any answer) stay on the Lock Screen card**, and the cached "before that" backstory too. Refresh the card from `latestThreads()` after deletes. (AppModel.swift `remove`)
-- [ ] `setListening(false)` doesn't cancel the 3-minute "WTF has paused listening" notification. (AppModel.swift)
+- [x] `setListening(false)` doesn't cancel the 3-minute "WTF has paused listening" notification. (AppModel.swift)
 - [ ] **No "starting" state, and start failures only show on Ask.** Listen on Timeline/Lists and the Settings toggle fail silently (the toggle snaps back), and the first start includes the speech model download with no progress or time limit. Add a busy state, an alert with the reason, "Open Settings" when the mic is denied, and a deadline on the download. (AppModel.swift, WTFApp.swift, SettingsView.swift, SpeechEngine.swift)
 - [ ] **Pill and card exceed the 160 pt height limit** (≈169–185 pt with trail + 3 buttons), so buttons get clipped. Drop the trail in the pill, smaller circles (≈40/50), less padding; with an answer showing hide the topic. The 3-line answer cuts spoken recaps; allow ~4 smaller lines. (WTFWidgets.swift)
-- [ ] Pill shows "● Recording" and "Listening" at once: show only the topic in the centre.
+- [x] Pill shows "● Recording" and "Listening" at once: show only the topic in the centre.
 - [ ] `stopSpeaking` during `ReadAloud.prepare()` caches a cut-off answer that later presses replay. (ReadAloud.swift)
 - [ ] Tapping the pill after WTF was killed: `wtf://listening` is ignored because `recording` is false, then listening restarts with no stop sheet. Also: a stop pressed while a start is in flight is overridden when the start finishes. (WTFApp.swift, AppModel.swift)
 - [ ] Minor: `hasHeard` turns on for any kept recording before music is filtered out; `Recorder.running` read without the lock.
@@ -32,9 +32,9 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] **Summaries refuse sensitive talk**: `permissiveContentTransformations` only applies to `String` responses; `@Generable` summaries, list items, memory, topics, corrections and facts still throw `guardrailViolation`. The conversation shows "Summarising…" forever. Add a plain-text summary fallback (parse "Title:" + bullets). (Brain.swift)
 - [ ] **A failed summary is retried on every run, forever** (each new chunk re-runs up to 60 s of AI); with Apple Intelligence off, every unsummarised conversation is rescanned each chunk. Track attempts/last try, back off, give up with a fallback title, still run the later steps. (Pipeline.swift `think`/`summarise`, Models.swift)
 - [ ] **Deleting the conversation in progress brings its last words back**: the chunk being recorded and pending chunks become a new conversation. Cut off chunks recorded before the delete (like `wipedAt`) and clear LiveTranscriber's recent words. (AppModel.swift `remove`, Pipeline.swift `forget`, LiveTranscriber.swift)
-- [ ] **Action button can read out deleted content**: `Standby.refresh` sets `ready` after a ≤15 s AI call, undoing a `forget()` made meanwhile. Add a generation counter. (Standby.swift)
+- [x] **Action button can read out deleted content**: `Standby.refresh` sets `ready` after a ≤15 s AI call, undoing a `forget()` made meanwhile. Add a generation counter. (Standby.swift)
 - [ ] **List suggestions silently dropped by a loose duplicate check** (half the words in common, any conversation, events ignore dates): "Dentist appointment" blocks "Doctor's appointment"; "Mum's birthday" blocks "Dad's birthday"; "Milk" blocks "Milk chocolate". Require near-identical titles and the same day for events. (WTFCore ActionRules.swift `similar`, Pipeline.swift `suggest`)
-- [ ] **Lasting facts are deleted with their conversation on expiry** (default 7 days), contradicting Things WTF Knows. Detach facts (conversationID = nil) on expiry instead. (AppModel.swift `remove`)
+- [x] **Lasting facts are deleted with their conversation on expiry** (default 7 days), contradicting Things WTF Knows. Detach facts (conversationID = nil) on expiry instead. (AppModel.swift `remove`)
 - [ ] **"Forget" on a person deletes on the background context while People shows them**: the same pattern as the old Delete All crash. Delete on `mainContext`. (Pipeline.swift `forgetPerson`, SettingsView.swift)
 - [ ] **`expireOld` runs twice at launch** (task + becoming active), so the second deletes already-deleted objects. Serialise it and skip ids already hidden. (WTFApp.swift, AppModel.swift)
 - [ ] **A deleted list item comes back as a suggestion** (duplicate check only sees items that still exist). Mark deleted items dismissed instead of deleting them. (ListsView.swift)
@@ -45,7 +45,7 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] Lower: Pipeline.swift:89 reads `chunk.start/end` inside a `@Sendable` closure (copy first); writes to a chunk after an await it may have been deleted in; `compact` drops "(…earlier part left out…)" markers; topics crossing midnight aren't found by `lines(of:)`; facts/AI list items never extracted if killed after the summary; done/dismissed items never cleaned up.
 
 ## Ask and answers
-- [ ] **Questions about conversations are answered from the Lists**: "Ask About This" on "Team meeting…" gives "I haven't heard about any upcoming appointments"; "What did I promise Tom?" lists the to-dos. Skip list answers when `focus` is set; treat did/tell/told/decide/happened/who/why as past; to-do questions list only to-dos. (WTFCore Transcript.swift `ListAnswers`, AppModel.swift `ask`)
+- [x] **Questions about conversations are answered from the Lists**: "Ask About This" on "Team meeting…" gives "I haven't heard about any upcoming appointments"; "What did I promise Tom?" lists the to-dos. Skip list answers when `focus` is set; treat did/tell/told/decide/happened/who/why as past; to-do questions list only to-dos. (WTFCore Transcript.swift `ListAnswers`, AppModel.swift `ask`)
 - [ ] **Deleted conversations' answers can survive**: answers are tagged only in `ask()`'s `defer`, so a delete mid-answer misses them, and Delete All mid-answer leaves an orphan. Tag as messages are added, and drop answers whose question was deleted. (AppModel.swift `ask`, `askAbout`, `answer`)
 - [ ] **Deleting any of the 12 most recent conversations (or its expiry) wipes recent answers**, because each answer is tagged with all 12. Tag only `focus` + `best`. (Pipeline.swift `notes`, AppModel.swift)
 - [ ] **Rewordings miss the quick path**: "What were we talking about?", "Where were we?", "Remind me what I was saying", "What was the last thing I said?". (WTFCore Prompts.swift `latest`)
@@ -60,14 +60,14 @@ Findings from a full review of build 35 (five reviewers: listening, pipeline, As
 - [ ] Unknown on device: whether the answer queues behind other AI work started by the flush, and whether Return in the multi-line field sends while busy (losing the question).
 
 ## Screens and UI
-- [ ] **Fix Words "Save" is likely white on white in dark mode** (`.confirmationAction` drawn filled with the white tint). Use a plain trailing button. (TimelineView.swift `FixWordsSheet`)
+- [x] **Fix Words "Save" is likely white on white in dark mode** (`.confirmationAction` drawn filled with the white tint). Use a plain trailing button. (TimelineView.swift `FixWordsSheet`)
 - [ ] **Swipe-to-delete in Lists also switches tab** (TabSwipe's drag fires too). Turn TabSwipe off in Lists or while a row swipe is in progress. (ListsView.swift, WTFApp.swift)
 - [ ] **"Delete All Recordings…" deletes far more** (hand-added to-dos, typed facts, corrected words, people, Ask history) and doesn't say it can't be undone. Rename to "Delete All Data…" and list it all. (SettingsView.swift)
 - [ ] **Shortening Keep Transcripts silently deletes conversations** next time WTF opens. Add a footer (and a confirmation). (SettingsView.swift)
 - [ ] **Renaming a named speaker creates a second person** (only this conversation changes); People › Rename renames everywhere. "Rename You" for your own voice; invalid names silently ignored; the confirmation note is off-screen on long transcripts. (TimelineView.swift, Pipeline.swift `nameVoice`)
 - [ ] **Timeline long-press Delete has no confirmation** (the conversation page asks). (TimelineView.swift)
 - [ ] **Conversations can't be renamed**, and a failed summary leaves "Summarising…" for ever. Add Rename; show "Conversation" after a failure. (TimelineView.swift `displayTitle`)
-- [ ] "No Results / Check the spelling" shows when nobody's searching (first recording pending, or after deleting the last one). Use `searching && shown.isEmpty`. (TimelineView.swift)
+- [x] "No Results / Check the spelling" shows when nobody's searching (first recording pending, or after deleting the last one). Use `searching && shown.isEmpty`. (TimelineView.swift)
 - [ ] Lists' tick button has no accessibility label ("circle, button"). (ListsView.swift)
 - [ ] Meaningful text in `.tertiary` (≈2:1 contrast): "Left hanging", "+ N more", "Writing it up…". Use `.secondary`. (TimelineView.swift, DayView.swift)
 - [ ] Stop sheet is a fixed 330 pt high; large text clips it. Use `.medium`. (WTFApp.swift)

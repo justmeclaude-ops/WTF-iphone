@@ -35,7 +35,7 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSMicrophoneUsageDescription: WTF listens for speech so it can remind you what you were on about. Silence is never stored, and everything stays on your iPhone.
         NSSpeechRecognitionUsageDescription: WTF turns what it hears into text on your iPhone.
-        NSUserNotificationsUsageDescription: WTF tells you when it hears appointments, shopping or to-dos.
+        ITSAppUsesNonExemptEncryption: false
         NSContactsUsageDescription: WTF uses your contacts' names so it hears and spells the people you talk about correctly. They stay on your iPhone.
         NSCalendarsFullAccessUsageDescription: WTF checks the appointments it hears against your calendar, and learns the names and places in it so it hears them right. Nothing leaves your iPhone.
     settings:

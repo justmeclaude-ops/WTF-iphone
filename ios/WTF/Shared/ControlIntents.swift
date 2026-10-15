@@ -37,6 +37,22 @@ struct WTFListeningControlIntent: LiveActivityIntent, AudioRecordingIntent {
     }
 }
 
+/// Stop, from the card and the pill: only ever stops (a card left from before WTF was closed
+/// mustn't turn listening on), and ends every card.
+struct WTFStopControlIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Stop Listening"
+    static let openAppWhenRun = false
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+    static let isDiscoverable = false
+
+    func perform() async throws -> some IntentResult {
+        #if !WIDGET
+        await AppModel.shared.setListening(false)
+        #endif
+        return .result()
+    }
+}
+
 /// Your list, read out.
 struct WTFListControlIntent: LiveActivityIntent, AudioPlaybackIntent {
     static let title: LocalizedStringResource = "Read My List"

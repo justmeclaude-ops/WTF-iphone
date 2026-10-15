@@ -56,6 +56,8 @@ struct ListControl: ControlWidget {
 /// while it's fresh, otherwise the trail; then the buttons.
 struct CardBody: View {
     let state: ListeningAttributes.ContentState
+    /// In the pill there's no room for the trail (iOS clips anything over 160 points).
+    var inIsland = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -63,17 +65,17 @@ struct CardBody: View {
                 Text(answer)
                     .font(.subheadline)
                     .foregroundStyle(.white)
-                    .lineLimit(3)
-                    .minimumScaleFactor(0.85)
+                    .lineLimit(4)
+                    .minimumScaleFactor(0.75)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 8) {
                     if state.earlier {
                         SmallControl(intent: WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that")
                     }
-                    SmallControl(intent: WTFListeningControlIntent(), icon: "stop.fill", label: "Stop")
+                    SmallControl(intent: WTFStopControlIntent(), icon: "stop.fill", label: "Stop")
                 }
             } else {
-                if state.trail.count > 1 { Trail(steps: state.trail) }
+                if state.trail.count > 1 && !inIsland { Trail(steps: state.trail) }
                 PillControls(state: state)
             }
         }
@@ -90,12 +92,12 @@ struct PillControls: View {
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             if state.earlier {
-                control(WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that", size: 46)
+                control(WTFBeforeControlIntent(), icon: "backward.fill", label: "Before that", size: 40)
             }
             if state.heard {
-                control(WTFAskControlIntent(), icon: "questionmark", label: "What was I saying?", size: 58)
+                control(WTFAskControlIntent(), icon: "questionmark", label: "What was I saying?", size: 50)
             }
-            control(WTFListeningControlIntent(), icon: "stop.fill", label: "Stop", size: 46)
+            control(WTFStopControlIntent(), icon: "stop.fill", label: "Stop", size: 40)
         }
         .frame(maxWidth: .infinity)
     }
@@ -156,10 +158,10 @@ struct ListeningLiveActivity: Widget {
                     Elapsed(since: s.since, font: .caption).frame(width: 56, alignment: .trailing)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(s.topic ?? "Listening").font(.headline).lineLimit(1)
+                    Text(s.answer == nil ? (s.topic ?? "") : "").font(.headline).lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    CardBody(state: s).padding(.top, 2)
+                    CardBody(state: s, inIsland: true).padding(.top, 2)
                 }
             } compactLeading: {
                 RecordingDot().padding(.leading, 2)
@@ -226,7 +228,7 @@ struct LockScreenCard: View {
                 }
                 CardBody(state: state)
             }
-            .padding(16)
+            .padding(14)
         }
     }
 }

@@ -28,7 +28,7 @@ final class ListeningActivity {
     private var state = ListeningAttributes.ContentState(topic: nil, trail: [], since: Date(), hanging: 0)
 
     /// Whether the card and the pill are up (they're where a press of their buttons is answered).
-    var showing: Bool { activity != nil }
+    var showing: Bool { activity?.activityState == .active }
 
     func start() {
         guard activity == nil, Self.allowed else { return }

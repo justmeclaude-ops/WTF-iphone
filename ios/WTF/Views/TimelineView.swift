@@ -81,7 +81,7 @@ struct TimelineView: View {
                 if conversations.isEmpty && pending.isEmpty {
                     ContentUnavailableView("No Conversations", systemImage: "waveform",
                                            description: Text("Turn on listening and your conversations will appear here."))
-                } else if shown.isEmpty {
+                } else if !query.isEmpty && shown.isEmpty {
                     ContentUnavailableView.search(text: query)
                 }
             }
@@ -430,7 +430,7 @@ struct FixWordsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { done(false) } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { done(true) }.disabled(text.trimmingCharacters(in: .whitespaces).isEmpty) }
+                ToolbarItem(placement: .topBarTrailing) { Button("Save") { done(true) }.fontWeight(.semibold).disabled(text.trimmingCharacters(in: .whitespaces).isEmpty) }
             }
         }
         .presentationDetents([.medium])

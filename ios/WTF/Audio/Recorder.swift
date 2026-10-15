@@ -23,6 +23,9 @@ final class Recorder: @unchecked Sendable {
     /// under [infoLock] too, for [stalled] to read from anywhere.
     private var engine = AVAudioEngine()
     private var engineObserver: NSObjectProtocol?
+    /// The engine before this one, kept a while: an engine mustn't be freed from inside its own
+    /// notification handler (Apple: it can deadlock).
+    private var retired: AVAudioEngine?
     private let queue = DispatchQueue(label: "wtf.recorder")
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
     private var converter: AVAudioConverter?
@@ -113,9 +116,13 @@ final class Recorder: @unchecked Sendable {
         let center = NotificationCenter.default
         if let engineObserver { center.removeObserver(engineObserver) }
         engineObserver = center.addObserver(forName: .AVAudioEngineConfigurationChange, object: new, queue: nil) { [weak self] _ in
-            guard let self, self.running else { return }
-            self.resume(why: "after the audio route changed")
+            // Off the engine's own thread: restarting makes a new engine and lets this one go.
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let self, self.running else { return }
+                self.resume(why: "after the audio route changed")
+            }
         }
+        retired = engine
         infoLock.lock(); engine = new; infoLock.unlock()
     }
 
